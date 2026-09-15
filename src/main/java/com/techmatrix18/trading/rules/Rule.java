@@ -1,9 +1,5 @@
 package com.techmatrix18.trading.rules;
 
-import com.techmatrix18.model.Candle;
-
-import java.util.List;
-
 /**
  * Rule interface defines a contract for trading rules that can be evaluated against a list of candles.
  *
@@ -12,15 +8,22 @@ import java.util.List;
  * @company TechMatrix18
  * @version 0.0.1
  */
+
 public interface Rule {
+
+    // Check if the rule is satisfied for the candle at the given index.
     boolean isSatisfied(int index);
 
     default Rule and(Rule other) {
-        return (i) -> this.isSatisfied(i) && other.isSatisfied(i);
+        return index -> this.isSatisfied(index) && other.isSatisfied(index);
     }
 
     default Rule or(Rule other) {
-        return (i) -> this.isSatisfied(i) || other.isSatisfied(i);
+        return index -> this.isSatisfied(index) || other.isSatisfied(index);
+    }
+
+    default Rule not() {
+        return index -> !this.isSatisfied(index);
     }
 }
 

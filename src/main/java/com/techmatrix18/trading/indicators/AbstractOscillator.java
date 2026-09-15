@@ -38,7 +38,7 @@ public abstract class AbstractOscillator implements Indicator<Double> {
     }
 
     // Проверка наличия данных по индексу
-    protected boolean hasEnoughData(int index) {
+    protected boolean hasValue(int index) {
         return index >= period - 1;
     }
 

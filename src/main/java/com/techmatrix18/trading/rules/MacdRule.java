@@ -1,9 +1,7 @@
 package com.techmatrix18.trading.rules;
 
-import com.techmatrix18.model.Candle;
 import com.techmatrix18.trading.indicators.MacdIndicator;
 
-import java.util.List;
 import java.util.Map;
 
 /**
@@ -14,6 +12,7 @@ import java.util.Map;
  * @company TechMatrix18
  * @version 0.0.1
  */
+
 public class MacdRule implements Rule {
     public enum MacdCondition {
         ABOVE_ZERO, CROSS_UP, CROSS_DOWN, MACD_ABOVE_ZERO, MACD_BELOW_ZERO, HIST_DECREASING

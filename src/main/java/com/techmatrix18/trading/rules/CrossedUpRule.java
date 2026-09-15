@@ -1,9 +1,6 @@
 package com.techmatrix18.trading.rules;
 
-import com.techmatrix18.model.Candle;
 import com.techmatrix18.trading.indicators.Indicator;
-
-import java.util.List;
 
 /**
  * CrossedUpRule checks if the closing price of the current candle has crossed above a specified indicator level.
@@ -13,6 +10,7 @@ import java.util.List;
  * @company TechMatrix18
  * @version 0.0.1
  */
+
 public class CrossedUpRule implements Rule {
     private final Indicator<Double> indicator;
     private final Indicator<Double> priceIndicator;

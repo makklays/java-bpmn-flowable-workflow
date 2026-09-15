@@ -1,9 +1,6 @@
 package com.techmatrix18.trading.rules;
 
-import com.techmatrix18.model.Candle;
 import com.techmatrix18.trading.indicators.Indicator;
-
-import java.util.List;
 
 /**
  * OverIndicatorRule checks if the value of a specified indicator is above a certain threshold.
@@ -13,6 +10,7 @@ import java.util.List;
  * @company TechMatrix18
  * @version 0.0.1
  */
+
 public class OverIndicatorRule implements Rule {
     private final Indicator<Double> indicator;
     private final double threshold;

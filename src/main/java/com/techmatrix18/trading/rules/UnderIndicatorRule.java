@@ -1,9 +1,6 @@
 package com.techmatrix18.trading.rules;
 
-import com.techmatrix18.model.Candle;
 import com.techmatrix18.trading.indicators.Indicator;
-
-import java.util.List;
 
 /**
  * UnderIndicatorRule checks if the value of a specified indicator is below a certain threshold.
@@ -15,6 +12,7 @@ import java.util.List;
  * @company TechMatrix18
  * @version 0.0.1
  */
+
 public class UnderIndicatorRule implements Rule {
     private final Indicator<Double> indicator;
     private final double threshold;

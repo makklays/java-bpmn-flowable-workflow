@@ -1,9 +1,6 @@
 package com.techmatrix18.trading.rules;
 
-import com.techmatrix18.model.Candle;
 import com.techmatrix18.trading.indicators.Indicator;
-
-import java.util.List;
 
 /**
  * IndicatorCrossedDownRule checks if one indicator has crossed below another indicator.
@@ -14,6 +11,7 @@ import java.util.List;
  * @company TechMatrix18
  * @version 0.0.1
  */
+
 public class IndicatorCrossedDownRule implements Rule {
     private final Indicator<Double> fast;
     private final Indicator<Double> slow;

@@ -1,9 +1,6 @@
 package com.techmatrix18.trading.rules;
 
-import com.techmatrix18.model.Candle;
 import com.techmatrix18.trading.indicators.Indicator;
-
-import java.util.List;
 
 /**
  * CrossedDownRule checks if an indicator has crossed down either another indicator or a constant threshold.
@@ -15,6 +12,7 @@ import java.util.List;
  * @company TechMatrix18
  * @version 0.0.1
  */
+
 public class CrossedDownRule implements Rule {
     private final Indicator<Double> indicator;
     private final Indicator<Double> priceIndicator; // Используем для цены

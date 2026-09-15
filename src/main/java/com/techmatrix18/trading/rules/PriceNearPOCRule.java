@@ -1,10 +1,7 @@
 package com.techmatrix18.trading.rules;
 
-import com.techmatrix18.model.Candle;
 import com.techmatrix18.trading.indicators.VolumeProfileIndicator;
 import com.techmatrix18.trading.series.CandleSeries;
-
-import java.util.List;
 
 /**
  * PriceNearPOCRule checks if the current price is near the Point of Control (POC) level.
@@ -18,6 +15,7 @@ import java.util.List;
  * @company TechMatrix18
  * @version 0.0.1
  */
+
 public class PriceNearPOCRule implements Rule {
     private final CandleSeries series; // Используем универсальный интерфейс
     private final VolumeProfileIndicator vpi;

@@ -1,9 +1,6 @@
 package com.techmatrix18.trading.rules;
 
-import com.techmatrix18.model.Candle;
 import com.techmatrix18.trading.series.CandleSeries;
-
-import java.util.List;
 
 /**
  * PricePercentRule checks if the current price has changed by a certain percentage from the entry price.
@@ -15,6 +12,7 @@ import java.util.List;
  * @company TechMatrix18
  * @version 0.0.1
  */
+
 public class PricePercentRule implements Rule {
     private final CandleSeries series; // Переходим на интерфейс
     private final double entryPrice;

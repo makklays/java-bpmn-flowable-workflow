@@ -1,10 +1,8 @@
 package com.techmatrix18.trading.rules;
 
-import com.techmatrix18.model.Candle;
 import com.techmatrix18.trading.indicators.FibonacciIndicator;
 import com.techmatrix18.trading.series.CandleSeries;
 
-import java.util.List;
 import java.util.Map;
 
 /**
@@ -15,6 +13,7 @@ import java.util.Map;
  * @company TechMatrix18
  * @version 0.0.1
  */
+
 public class PriceNearFibRule implements Rule {
     private final CandleSeries series; // Заменили List на наш универсальный интерфейс
     private final FibonacciIndicator fib;
