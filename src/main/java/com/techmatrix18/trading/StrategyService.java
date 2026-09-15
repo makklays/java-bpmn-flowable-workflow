@@ -39,6 +39,10 @@ public class StrategyService {
     private final SmaIndicator sma200 = new SmaIndicator(200);
     private final EmaIndicator ema50 = new EmaIndicator(50);
     private final EmaIndicator ema200 = new EmaIndicator(200);
+
+    private final SmaIndicator fastSma = new SmaIndicator(10);
+    private final SmaIndicator slowSma = new SmaIndicator(30);
+
     private final StochasticIndicator stochasticIndicator = new StochasticIndicator();
 
     private final MacdIndicator macd = new MacdIndicator(12, 26, 9);
@@ -94,6 +98,50 @@ public class StrategyService {
             telegramService.sendMessageForAll("❌ ВЫХОД " + symbol + ": Цель достигнута или RSI развернулся!");
             // Здесь можно вызвать метод для закрытия позиции
         }
+    }
+
+    /**
+     * 15.09.2026: Новый метод для демонстрации работы с индикаторами и правилами (для бектеста)
+     */
+    public void runMyLogic(String symbol, CandleSeries series) {
+        // 1. Проверяем минимальный порог данных для корректного расчета SMA 200 (пропускаем первые 200 свечей для прогрева)
+        if (series.size() < 200) return;
+
+        // 2. Подготовка индикаторов (вычисляем кэш один раз для всей истории)
+        rsiIndicator.prepare(series);
+        fastSma.prepare(series);
+        slowSma.prepare(series);
+
+        // 3. Строим правила для Входа (BUY)
+        Rule crossedUp = new IndicatorCrossedUpRule(fastSma, slowSma);
+        Rule rsiLow = new UnderIndicatorRule(rsiIndicator, 50.0); // RSI < 50
+        Rule entryRule = crossedUp.and(rsiLow);
+
+        // 4. Строим правила для Выхода (SELL)
+        Rule exitRule = new IndicatorCrossedUpRule(slowSma, fastSma);
+
+        // 5. Создаем готовую стратегию
+        Strategy movingAverageCrossStrategy = new Strategy("Bollinger + RSI Cross", entryRule, exitRule);
+
+        System.out.println("=== СТАРТ БЭКТЕСТА ДЛЯ " + symbol + " ===");
+
+        // 6. Пробегаем по истории. Начинаем с 200, так как до этого индикаторы "прогревались"
+        for (int i = 200; i < series.size(); i++) {
+            if (movingAverageCrossStrategy.shouldEnter(i)) {
+                //telegramService.sendMessageForAll("🎯 СИГНАЛ НА ВХОД: Боллинджер пробит + RSI подтверждает!");
+                // Берем цену закрытия свечи, на которой зафиксирован сигнал
+                double closePrice = series.getClose(i);
+                //System.out.println("Сигнал на ПОКУПКУ на свече №" + i);
+                System.out.printf("🎯 СИГНАЛ НА ВХОД (BUY) | Свеча №%d | Цена: %.2f%n", i, closePrice);
+            } else if (movingAverageCrossStrategy.shouldExit(i)) {
+                //telegramService.sendMessageForAll("🎯 СИГНАЛ НА ВЫХОД: Боллинджер пробит + RSI подтверждает!");
+                double closePrice = series.getClose(i);
+                //System.out.println("Сигнал на ПРОДАЖУ на свече №" + i);
+                System.out.printf("🚨 СИГНАЛ НА ВЫХОД (SELL) | Свеча №%d | Цена: %.2f%n", i, closePrice);
+            }
+        }
+
+        System.out.println("=== БЭКТЕСТ ЗАВЕРШЕН ===");
     }
 
     // Проверим только входные сигналы для простоты - пример

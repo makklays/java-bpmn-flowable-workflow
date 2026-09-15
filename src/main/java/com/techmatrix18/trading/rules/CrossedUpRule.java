@@ -12,40 +12,39 @@ import com.techmatrix18.trading.indicators.Indicator;
  */
 
 public class CrossedUpRule implements Rule {
-    private final Indicator<Double> indicator;
-    private final Indicator<Double> priceIndicator;
+    private final Indicator<Double> first;
+    private final Indicator<Double> second;
     private final Double constantThreshold;
 
-    // Конструктор 1: Индикатор пересекает числовое значение (например, RSI выходит из 30 вверх)
+    // Конструктор 1: Индикатор пересекает фиксированный порог снизу вверх (например, RSI выходит из 30)
     public CrossedUpRule(Indicator<Double> indicator, double threshold) {
-        this.indicator = indicator;
+        this.first = indicator;
         this.constantThreshold = threshold;
-        this.priceIndicator = null;
+        this.second = null;
     }
 
-    // Конструктор 2: Цена пересекает индикатор (например, Цена пробивает MA снизу вверх)
-    public CrossedUpRule(Indicator<Double> indicator, Indicator<Double> priceIndicator) {
-        this.indicator = indicator;
-        this.priceIndicator = priceIndicator;
+    // Конструктор 2: first пересекает second снизу вверх (например, Цена пробивает MA, или Быстрая MA пробивает Медленную)
+    public CrossedUpRule(Indicator<Double> first, Indicator<Double> second) {
+        this.first = first;
+        this.second = second;
         this.constantThreshold = null;
     }
 
     @Override
     public boolean isSatisfied(int i) {
-        // Пересечение требует как минимум две точки (текущую и предыдущую)
         if (i < 1) return false;
 
-        double currentVal = indicator.getValue(i);
-        double prevVal = indicator.getValue(i - 1);
+        double currentFirst = first.getValue(i);
+        double prevFirst = first.getValue(i - 1);
 
         if (constantThreshold != null) {
-            // Случай 1: Линия индикатора пересекает порог снизу вверх
-            return prevVal <= constantThreshold && currentVal > constantThreshold;
-        } else if (priceIndicator != null) {
-            // Случай 2: Цена пересекает линию индикатора снизу вверх
-            double currentPrice = priceIndicator.getValue(i);
-            double prevPrice = priceIndicator.getValue(i - 1);
-            return prevPrice <= prevVal && currentPrice > currentVal;
+            return prevFirst <= constantThreshold && currentFirst > constantThreshold;
+        } else if (second != null) {
+            double currentSecond = second.getValue(i);
+            double prevSecond = second.getValue(i - 1);
+
+            // Четкая логика: первый был ниже/равен второму, а стал строго выше
+            return prevFirst <= prevSecond && currentFirst > currentSecond;
         }
 
         return false;
