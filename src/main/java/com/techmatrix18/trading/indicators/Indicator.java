@@ -12,12 +12,15 @@ import com.techmatrix18.trading.series.CandleSeries;
  *
  * @param <T>
  */
+
 public interface Indicator<T> {
     /**
      * Рассчитывает значение индикатора для конкретной свечи по индексу.
      * Именно этот метод реализует математику индикатора.
      */
-    T calculate(CandleSeries series, int index);
+    default T calculate(CandleSeries series, int index) {
+        return getValue(index);
+    }
 
     /**
      * Возвращает заранее рассчитанное значение из кэша (history).
