@@ -1,8 +1,7 @@
 package com.techmatrix18.trading.rules;
 
 import com.techmatrix18.trading.indicators.MacdIndicator;
-
-import java.util.Map;
+import com.techmatrix18.trading.indicators.MacdValue;
 
 /**
  * MacdRule is a placeholder for a rule that would use the MACD (Moving Average Convergence Divergence) indicator
@@ -15,7 +14,13 @@ import java.util.Map;
 
 public class MacdRule implements Rule {
     public enum MacdCondition {
-        ABOVE_ZERO, CROSS_UP, CROSS_DOWN, MACD_ABOVE_ZERO, MACD_BELOW_ZERO, HIST_DECREASING
+        ABOVE_ZERO,
+        CROSS_UP,
+        CROSS_DOWN,
+        MACD_ABOVE_ZERO,
+        MACD_BELOW_ZERO,
+        HIST_FALLING, // Гистограмма падает (Текущая < Предыдущей) — медвежий знак
+        HIST_RISING   // Гистограмма растет (Текущая > Предыдущей) — бычий знак
     }
 
     private final MacdIndicator macd;
@@ -28,26 +33,25 @@ public class MacdRule implements Rule {
 
     @Override
     public boolean isSatisfied(int i) {
-        // Для условий пересечения и затухания нужно минимум 2 точки
+        // Защита: для пересечений и сравнений с историей нужно минимум 2 точки
         if (i < 1) return false;
 
-        Map<String, Double> current = macd.getValue(i);
-        Map<String, Double> prev = macd.getValue(i - 1);
+        MacdValue current = macd.getValue(i);
+        MacdValue prev = macd.getValue(i - 1);
 
-        if (current.isEmpty()) return false;
-
-        double currentHist = current.getOrDefault("histogram", 0.0);
-        double currentLine = current.getOrDefault("macdLine", 0.0);
-        double prevHist = prev.getOrDefault("histogram", 0.0);
+        // Безопасная проверка (если индикатор вернул null или EMPTY на этапе прогрева)
+        if (current == null || prev == null || current == MacdValue.EMPTY) {
+            return false;
+        }
 
         return switch (condition) {
-            case ABOVE_ZERO -> currentHist > 0;
-            case MACD_ABOVE_ZERO -> currentLine > 0;
-            case MACD_BELOW_ZERO -> currentLine < 0;
-            case CROSS_UP -> prevHist <= 0 && currentHist > 0;
-            case CROSS_DOWN -> prevHist >= 0 && currentHist < 0;
-            case HIST_DECREASING -> Math.abs(currentHist) < Math.abs(prevHist);
-            default -> false;
+            case ABOVE_ZERO -> current.histogram() > 0;
+            case MACD_ABOVE_ZERO -> current.macdLine() > 0;
+            case MACD_BELOW_ZERO -> current.macdLine() < 0;
+            case CROSS_UP -> prev.histogram() <= 0 && current.histogram() > 0;
+            case CROSS_DOWN -> prev.histogram() >= 0 && current.histogram() < 0;
+            case HIST_FALLING -> current.histogram() < prev.histogram();
+            case HIST_RISING -> current.histogram() > prev.histogram();
         };
     }
 }
@@ -55,29 +59,28 @@ public class MacdRule implements Rule {
 /*
 Как использовать:
 
-1. Глобальный тренд вверх (Линия MACD > 0)
-// Использование в коде:
-Rule globalUptrend = new MacdRule(macd, MacdRule.MacdCondition.MACD_ABOVE_ZERO);
-if (globalUptrend.isSatisfied(candles)) {
-    // Мы в зоне бычьего тренда, можно рассматривать покупки
-}
+// 1. Инициализируем индикатор MACD с классическими параметрами (12, 26, 9)
+MacdIndicator macdIndicator = new MacdIndicator(12, 26, 9);
 
-2. Затухание тренда (Гистограмма падает)
-Это «ранний звоночек». Цена еще может расти, но столбики гистограммы уже становятся меньше — значит, сила покупателей иссякает.
-// Проверка: текущая гистограмма меньше предыдущей
-Rule momentumFading = new MacdRule(macd, MacdRule.MacdCondition.HIST_DECREASING);
-if (momentumFading.isSatisfied(candles)) {
-    telegramService.sendMessageForAll("⚠️ Внимание: Бычий импульс затухает, возможен разрот!");
-}
+// 2. Подготавливаем данные (считаем кэш для всей истории перед запуском правил)
+macdIndicator.prepare(series);
 
-// 1. Покупаем, когда MACD пересек сигнальную линию вверх
-Rule buySignal = new MacdRule(macd, MacdRule.MacdCondition.CROSS_UP);
+// 3. Создаем правила на основе перечисления MacdCondition
+Rule entryRule = new MacdRule(macdIndicator, MacdRule.MacdCondition.CROSS_UP);
+Rule exitRule = new MacdRule(macdIndicator, MacdRule.MacdCondition.CROSS_DOWN);
 
-// 2. Продаем, когда MACD пересек сигнальную линию вниз
-Rule sellSignal = new MacdRule(macd, MacdRule.MacdCondition.CROSS_DOWN);
+// 4. Упаковываем правила в стратегию
+Strategy macdStrategy = new Strategy("MACD Histogram Cross", entryRule, exitRule);
 
-// 3. Комбинируем: Покупаем, если MACD пересек сигнал ВВЕРХ и при этом мы у уровня Фибо
-Rule smartBuy = buySignal.and(new PriceNearFibRule(fib, "level_618"));
+// Вход: MACD пересекает 0 вверх И RSI при этом ниже 40 (рынок перепродан, отличная точка входа)
+Rule entryRule = new MacdRule(macdIndicator, MacdRule.MacdCondition.CROSS_UP)
+        .and(new UnderIndicatorRule(rsiIndicator, 40.0));
+
+// Выход: MACD пересекает 0 вниз ИЛИ цена падает ниже скользящей средней
+Rule exitRule = new MacdRule(macdIndicator, MacdRule.MacdCondition.CROSS_DOWN)
+        .or(new CrossedDownRule(priceIndicator, maIndicator));
+
+Strategy complexStrategy = new Strategy("MACD + RSI Combo", entryRule, exitRule);
 
 */
 

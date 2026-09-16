@@ -13,27 +13,48 @@ import com.techmatrix18.trading.series.CandleSeries;
  * @company TechMatrix18
  * @version 0.0.1
  */
+
 public class EmaIndicator extends AbstractOscillator {
-    public EmaIndicator(int period) { super(period); }
+
+    private double[] historyCache = new double[0];
+
+    public EmaIndicator(int period) {
+        super(period);
+    }
 
     @Override
     public void prepare(CandleSeries series) {
-        history.clear();
-        if (series.size() == 0) return;
+        if (series == null || series.size() == 0) {
+            historyCache = new double[0];
+            return;
+        }
 
+        int size = series.size();
+        historyCache = new double[size];
+
+        if (size < period) {
+            // Если свечей меньше периода, EMA построить нельзя, заполняем ценой закрытия
+            for (int i = 0; i < size; i++) historyCache[i] = series.getClose(i);
+            return;
+        }
+
+        // Шаг 1: Первая точка EMA — это простая средняя (SMA) за первый период
+        double sum = 0.0;
+        for (int i = 0; i < period; i++) {
+            sum += series.getClose(i);
+            // До достижения полноценного периода записываем просто цену (или 0.0)
+            historyCache[i] = series.getClose(i);
+        }
+
+        double ema = sum / period;
+        historyCache[period - 1] = ema; // Записываем честную стартовую точку
+
+        // Шаг 2: Для всех последующих свечей применяем рекуррентную формулу EMA
         double multiplier = 2.0 / (period + 1);
-        // Начальное значение EMA обычно берется равным цене первой свечи
-        double ema = series.getClose(0);
-
-        for
-
-        (int i = 0; i < series.size(); i++) {
+        for (int i = period; i < size; i++) {
             double close = series.getClose(i);
-
-            // Рекуррентная формула EMA
             ema = (close - ema) * multiplier + ema;
-
-            history.add(ema);
+            historyCache[i] = ema;
         }
     }
 
@@ -41,18 +62,34 @@ public class EmaIndicator extends AbstractOscillator {
     public Double calculate(CandleSeries series, int index) {
         if (index < 0) return 0.0;
 
-        // Если значение уже есть в кэше history, берем его (для скорости)
-        if (index < history.size()) {
-            return history.get(index);
+        // Если кэш подготовлен и индекс внутри него — мгновенно отдаем значение
+        if (index < historyCache.length) {
+            return historyCache[index];
         }
 
-        // Если кэша нет (например, одиночный расчет), считаем по всей цепочке от 0 до index
+        // Если кэша нет, выполняем точно такой же математический расчет, как в prepare
+        if (series.size() < period || index < period - 1) {
+            return series.getClose(index);
+        }
+
+        double sum = 0.0;
+        for (int i = 0; i < period; i++) {
+            sum += series.getClose(i);
+        }
+        double ema = sum / period;
+
         double multiplier = 2.0 / (period + 1);
-        double ema = series.getClose(0);
-        for (int i = 1; i <= index; i++) {
+        for (int i = period; i <= index; i++) {
             ema = (series.getClose(i) - ema) * multiplier + ema;
         }
+
         return ema;
+    }
+
+    // Переопределяем getValue, чтобы он читал из нашего быстрого примитивного массива
+    public double getEmaValue(int index) {
+        if (index < 0 || index >= historyCache.length) return 0.0;
+        return historyCache[index];
     }
 }
 
@@ -62,6 +99,17 @@ public class EmaIndicator extends AbstractOscillator {
 // Инициализируем индикаторы
 EmaIndicator ema9 = new EmaIndicator(9);
 EmaIndicator ema21 = new EmaIndicator(21);
+
+//
+EmaIndicator ema200 = new EmaIndicator(200);
+ema200.prepare(series);
+Rule entryRule = new CrossedUpRule(closePrice, ema200);   // Цена пересекает EMA200 вверх
+Rule exitRule = new CrossedDownRule(closePrice, ema200);   // Цена пересекает EMA200 вниз
+Strategy trendStrategy = new Strategy("EMA Trend Strategy", entryRule, exitRule);
+
+// Вы просто создаете MACD. Внутри него уже сидят fastEma и slowEma
+MacdIndicator macd = new MacdIndicator(12, 26, 9);
+macd.prepare(series);
 
 // 1. Золотой крест (EMA 9 пересекает EMA 21 вверх)
 Rule goldenCross = new IndicatorCrossedUpRule(ema9, ema21);

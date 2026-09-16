@@ -1,12 +1,17 @@
 package com.techmatrix18.trading.rules;
 
+import com.techmatrix18.trading.indicators.FibLevels;
 import com.techmatrix18.trading.indicators.FibonacciIndicator;
 import com.techmatrix18.trading.series.CandleSeries;
 
-import java.util.Map;
+import java.util.function.Function;
 
 /**
  * PriceNearFibRule checks if the current price is near a specific Fibonacci level.
+ * Правило близости цены к уровню Фибоначчи (Price Near Fibonacci Rule).
+ *
+ * Возвращает {@code true}, если текущая цена закрытия находится в пределах заданного
+ * процентного диапазона (чувствительности) от выбранного уровня Фибоначчи.
  *
  * @author Alexander Kuziv
  * @since 08.04.2026
@@ -15,28 +20,47 @@ import java.util.Map;
  */
 
 public class PriceNearFibRule implements Rule {
-    private final CandleSeries series; // Заменили List на наш универсальный интерфейс
+    private final CandleSeries series;
     private final FibonacciIndicator fib;
-    private final String targetLevel;
-    private final double sensitivity; // Вынесли чувствительность в параметры
 
-    public PriceNearFibRule(CandleSeries series, FibonacciIndicator fib, String targetLevel, double sensitivity) {
+    /** Функциональный интерфейс для выбора уровня из FibLevels (например, FibLevels::lvl618) */
+    private final Function<FibLevels, Double> levelExtractor;
+
+    /** Чувствительность в виде доли (например, 0.005 для 0.5% отклонения) */
+    private final double sensitivity;
+
+    /**
+     * Конструктор правила.
+     *
+     * @param series         история свечей
+     * @param fib            подготовленный индикатор Фибоначчи
+     * @param levelExtractor ссылка на метод уровня, например: {@code FibLevels::lvl618} или {@code FibLevels::lvl382}
+     * @param sensitivity    допустимый процент отклонения (0.01 = 1%, 0.005 = 0.5%)
+     */
+    public PriceNearFibRule(CandleSeries series, FibonacciIndicator fib,
+                            Function<FibLevels, Double> levelExtractor, double sensitivity) {
         this.series = series;
         this.fib = fib;
-        this.targetLevel = targetLevel;
+        this.levelExtractor = levelExtractor;
         this.sensitivity = sensitivity;
     }
 
     @Override
     public boolean isSatisfied(int i) {
-        Map<String, Double> levels = fib.getValue(i);
-        if (levels == null || !levels.containsKey(targetLevel)) return false;
+        FibLevels levels = fib.getValue(i);
 
-        // Используем методы нашей серии
+        // Защита от пустых данных на этапе прогрева индикатора
+        if (levels == null || levels == FibLevels.EMPTY) {
+            return false;
+        }
+
+        // Получаем цену текущей свечи из нашего интерфейса
         double currentPrice = series.getClose(i);
-        double fibPrice = levels.get(targetLevel);
 
-        // Проверка близости к уровню
+        // Извлекаем конкретный запрашиваемый уровень Фибоначчи через экстрактор
+        double fibPrice = levelExtractor.apply(levels);
+
+        // Математически точная проверка близости к уровню
         return Math.abs(currentPrice - fibPrice) / fibPrice <= sensitivity;
     }
 }
@@ -44,42 +68,17 @@ public class PriceNearFibRule implements Rule {
 /*
 Как использовать:
 
-1. Базовый пример: Касание «Золотого сечения»
-Самый популярный сценарий — когда цена откатывается к уровню 0.618 и мы ждем отскока.
+FibonacciIndicator fib = new FibonacciIndicator(150);
+fib.prepare(series);
 
-// Инициализация правила для уровня 61.8%
-Rule nearGoldLevel = new PriceNearFibRule(fib, "level_618");
-if (nearGoldLevel.isSatisfied(candles)) {
-    // Цена вплотную подошла к уровню 0.618.
-    // Обычно здесь трейдеры ищут подтверждение разворота.
-}
+// Ищем момент, когда цена подошла к Золотому Сечению (0.618) ближе чем на 0.3%
+Rule nearGoldenRatio = new PriceNearFibRule(series, fib, FibLevels::lvl618, 0.003);
 
-2. Сложное условие: Вход при подтверждении (Fib + RSI)
-Одного касания уровня часто мало. Вы можете объединить это правило с RSI, чтобы купить, когда цена у уровня Фибо И рынок перепродан:
+// Ищем момент, когда цена подошла к уровню 50% ближе чем на 0.5%
+Rule nearFiftyPercent = new PriceNearFibRule(series, fib, FibLevels::lvl500, 0.005);
 
-// 1. Цена подошла к уровню 0.786 (глубокая коррекция)
-Rule atDeepSupport = new PriceNearFibRule(fib, "level_786");
-// 2. RSI при этом ниже 30
-Rule rsiLow = new UnderIndicatorRule(rsi, 30.0);
-// Комбинируем: Покупаем только если оба условия верны
-Rule fibBuyStrategy = atDeepSupport.and(rsiLow);
-if (fibBuyStrategy.isSatisfied(candles)) {
-    telegramService.sendMessageForAll("🎯 Идеальная точка входа: Касание Фибо 0.786 при низком RSI!");
-}
-
-3. Использование для фиксации прибыли (Take Profit)
-Вы можете использовать уровни Фибоначчи как цели для продажи. Например, если вы купили актив и ждете, когда он дойдет до уровня 0.236 сверху:
-// Правило для фиксации прибыли у верхнего сопротивления
-Rule takeProfitAtFib = new PriceNearFibRule(fib, "level_236");
-if (takeProfitAtFib.isSatisfied(candles)) {
-    telegramService.sendMessageForAll("💰 Пора фиксировать прибыль! Цена достигла уровня Фибо 0.236.");
-}
-
-4. Нюанс по точности (0.1%)
-В вашем классе прописано: Math.abs(currentPrice - levelPrice) / levelPrice < 0.001.
-    Это означает 0.1% отклонения.
-    Для Bitcoin (цена ~60,000) это зазор в $60.
-    Если вы торгуете на очень волатильных монетах (шиткоинах), этот зазор в конструкторе можно сделать настраиваемым, чтобы ловить более широкие касания.
+// Объединяем в общую стратегию
+Rule entryRule = nearGoldenRatio.and(new MacdRule(macd, MacdRule.MacdCondition.CROSS_UP));
 
 */
 

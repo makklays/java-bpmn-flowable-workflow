@@ -2,9 +2,6 @@ package com.techmatrix18.trading.indicators;
 
 import com.techmatrix18.trading.series.CandleSeries;
 
-import java.util.ArrayList;
-import java.util.List;
-
 /**
  * StochasticIndicator calculates the Stochastic Oscillator, which is a momentum indicator comparing a particular
  * closing price of a security to a range of its prices over a certain period of time.
@@ -12,35 +9,55 @@ import java.util.List;
  *
  * Показывает перекупленность/перепроданность актива, помогает находить точки разворота тренда.
  *
+ * Зона перепроданности (< 20): Когда рынок падает слишком сильно, линии Стохастика уходят ниже 20.
+ * Как только быстрая линия %K пересекает сигнальную %D снизу вверх — это сильный сигнал на покупку (BUY)
+ *
+ * Зона перекупленности (> 80): Когда рынок перегрет, линии уходят выше 80. Пересечение %K и %D
+ * сверху вниз — это сигнал на продажу/выход (SELL).
+ *
  * @author Alexander Kuziv
  * @since 08.04.2026
  * @company TechMatrix18
  * @version 0.0.1
  */
-public class StochasticIndicator extends AbstractOscillator {
-    private List<Double> dLineHistory = new ArrayList<>(); // Линия %D (сигнальная)
-    private final int dPeriod = 3; // Период сглаживания для %D
 
-    public StochasticIndicator() { super(14); }
+public class StochasticIndicator implements Indicator<StochasticValue> {
+    private final int kPeriod;
+    private final int dPeriod = 3;
+    private StochasticValue[] historyCache = new StochasticValue[0];
 
-    @Override
+    public StochasticIndicator() {
+        this.kPeriod = 14;
+    }
+
+    public StochasticIndicator(int kPeriod) {
+        this.kPeriod = kPeriod;
+    }
+
     public void prepare(CandleSeries series) {
-        history.clear();
-        dLineHistory.clear();
+        if (series == null || series.size() == 0) {
+            historyCache = new StochasticValue[0];
+            return;
+        }
 
-        // 1. Считаем быструю линию %K
-        for (int i = 0; i < series.size(); i++) {
+        int size = series.size();
+        historyCache = new StochasticValue[size];
 
-            if (i < period - 1) {
-                history.add(50.0); // Нейтральное значение на этапе прогрева
+        // Массив для временного хранения быстрой линии %K перед сглаживанием
+        double[] kLines = new double[size];
+
+        // Шаг 1: Считаем быструю линию %K
+        for (int i = 0; i < size; i++) {
+            if (i < kPeriod - 1) {
+                kLines[i] = 50.0; // Нейтральная зона на этапе прогрева
                 continue;
             }
 
-            // Поиск Min Low и Max High за период напрямую через серию
-            double lowMin = series.getLow(i);
-            double highMax = series.getHigh(i);
+            int start = i - kPeriod + 1;
+            double lowMin = series.getLow(start);
+            double highMax = series.getHigh(start);
 
-            for (int j = i; j > i - period; j--) {
+            for (int j = start + 1; j <= i; j++) {
                 double currentLow = series.getLow(j);
                 double currentHigh = series.getHigh(j);
                 if (currentLow < lowMin) lowMin = currentLow;
@@ -50,67 +67,101 @@ public class StochasticIndicator extends AbstractOscillator {
             double currentClose = series.getClose(i);
 
             if (highMax == lowMin) {
-                history.add(50.0);
+                kLines[i] = 50.0;
             } else {
-                double kLine = ((currentClose - lowMin) / (highMax - lowMin)) * 100;
-                history.add(kLine);
+                kLines[i] = ((currentClose - lowMin) / (highMax - lowMin)) * 100.0;
             }
         }
 
-        // 2. Считаем сигнальную линию %D (SMA от линии %K)
-        for (int i = 0; i < history.size(); i++) {
-            if (i < dPeriod - 1) {
-                dLineHistory.add(50.0);
-            } else {
-                double sum = 0;
-                for (int j = 0; j < dPeriod; j++) {
-                    sum += history.get(i - j);
-                }
-                dLineHistory.add(sum / dPeriod);
+        // Шаг 2: Считаем сигнальную линию %D (SMA от %K) и упаковываем в кэш
+        for (int i = 0; i < size; i++) {
+            if (i < kPeriod - 1 + dPeriod - 1) {
+                // Ждем пока прогреется и %K, и скользящая средняя %D
+                historyCache[i] = StochasticValue.NEUTRAL;
+                continue;
             }
-        }
-    }
 
-    // Получение значения сигнальной линии %D по индексу
-    public Double getDValue(int index) {
-        if (index < 0 || index >= dLineHistory.size()) return 50.0;
-        return dLineHistory.get(index);
+            double sum = 0;
+            for (int j = 0; j < dPeriod; j++) {
+                sum += kLines[i - j];
+            }
+            double dLine = sum / dPeriod;
+
+            historyCache[i] = new StochasticValue(kLines[i], dLine);
+        }
     }
 
     @Override
-    public Double calculate(CandleSeries series, int index) {
-        // Если кэш пуст или меньше нужного индекса — готовим данные
-        if (history.size() <= index) {
+    public StochasticValue getValue(int index) {
+        if (index < 0 || index >= historyCache.length || historyCache[index] == null) {
+            return StochasticValue.NEUTRAL;
+        }
+        return historyCache[index];
+    }
+
+    public StochasticValue calculate(CandleSeries series, int index) {
+        if (historyCache.length <= index) {
             prepare(series);
         }
         return getValue(index);
     }
 }
 
+
 /*
 Как использовать:
 
-1. Зоны перекупленности и перепроданности
-// Инициализируем индикатор
-StochasticIndicator stoch = new StochasticIndicator();
-// Правило: Стохастик ниже 20 (Цена слишком низко относительно недавнего диапазона — пора покупать)
-Rule isOversold = new UnderIndicatorRule(stoch, 20.0);
-// Правило: Стохастик выше 80 (Цена слишком высоко — пора продавать)
-Rule isOverbought = new OverIndicatorRule(stoch, 80.0);
+public void runStochasticStrategy(String symbol, CandleSeries series) {
+    // 1. Защита: Стохастику (14, 3) нужно минимум 17-20 свечей для прогрева истории
+    if (series.size() < 30) return;
 
-2. Выход из зоны (Сигнал на разворот)
-// Правило: Стохастик пробил уровень 20 снизу вверх (выход из перепроданности)
-Rule exitOversold = new CrossedUpRule(stoch, 20.0);
-// Правило: Стохастик пробил уровень 80 сверху вниз (выход из перекупленности)
-Rule exitOverbought = new CrossedDownRule(stoch, 80.0);
+    // 2. Инициализируем индикатор Стохастика (период %K = 14)
+    StochasticIndicator stochastic = new StochasticIndicator(14);
 
-3. Комбинированная стратегия (Stoch + Trend)
-// Покупаем, только если глобальный тренд вверх (Цена > SMA 200)
-// И Стохастик дает сигнал на выход из перепроданности
-Rule smartBuy = new OverIndicatorRule(new SmaIndicator(200), 0.0)
-                .and(new CrossedUpRule(stoch, 20.0));
-if (smartBuy.isSatisfied(candles)) {
-    telegramService.sendMessageForAll("🚀 Стохастик подтвердил разворот по тренду!");
+    // Подготавливаем кэш истории (заполняем массив historyCache за один проход)
+    stochastic.prepare(series);
+
+    // 3. Выделяем конкретные линии Стохастика как отдельные Indicator<Double> с помощью лямбд
+    Indicator<Double> kLine = index -> stochastic.getValue(index).k();
+    Indicator<Double> dLine = index -> stochastic.getValue(index).d();
+
+    // 4. Строим правила для ВХОДА (BUY)
+    // Условие А: Линия %K пересекает сигнальную линию %D снизу вверх
+    Rule stochCrossUp = new CrossedUpRule(kLine, dLine);
+    // Условие Б: Линия %K находится в зоне перепроданности (ниже 20)
+    Rule inOversoldZone = new UnderIndicatorRule(kLine, 20.0);
+
+    // Объединяем: Входим, когда пересечение происходит строго в зоне перепроданности
+    Rule entryRule = stochCrossUp.and(inOversoldZone);
+
+    // 5. Строим правила для ВЫХОДА (SELL)
+    // Условие А: Линия %K пересекает %D сверху вниз
+    Rule stochCrossDown = new CrossedDownRule(kLine, dLine);
+    // Условие Б: Линия %K находится в зоне перекупленности (выше 80)
+    Rule inOverboughtZone = new OverIndicatorRule(kLine, 80.0);
+
+    // Выходим, когда пересечение происходит в зоне перекупленности
+    Rule exitRule = stochCrossDown.and(inOverboughtZone);
+
+    // 6. Упаковываем правила в стратегию
+    Strategy stochStrategy = new Strategy("Stochastic Oscillator Rebound", entryRule, exitRule);
+
+    System.out.println("=== СТАРТ БЭКТЕСТА СТОХАСТИКА ДЛЯ " + symbol + " ===");
+
+    // Начинаем с 20-й свечи, так как к этому моменту индикатор уже стабилен
+    for (int i = 20; i < series.size(); i++) {
+
+        if (stochStrategy.shouldEnter(i)) {
+            System.out.printf("🎯 [BUY] Свеча №%d | Бычий разворот Стохастика! %%K: %.2f | %%D: %.2f%n",
+                i, kLine.getValue(i), dLine.getValue(i));
+
+        } else if (stochStrategy.shouldExit(i)) {
+            System.out.printf("🚨 [SELL] Свеча №%d | Медвежий разворот Стохастика! Выход! %%K: %.2f | %%D: %.2f%n",
+                i, kLine.getValue(i), dLine.getValue(i));
+        }
+    }
+
+    System.out.println("=== БЭКТЕСТ ЗАВЕРШЕН ===");
 }
 
 */

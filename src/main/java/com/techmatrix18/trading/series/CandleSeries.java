@@ -13,9 +13,13 @@ import com.techmatrix18.model.Candle;
 public interface CandleSeries {
     Candle getCandle(int index);
     int size();
+
     // Позволяет получить double значения конкретного поля свечи по индексу
     default double getClose(int index) { return getCandle(index).getClose().doubleValue(); }
     default double getHigh(int index) { return getCandle(index).getHigh().doubleValue(); }
     default double getLow(int index) { return getCandle(index).getLow().doubleValue(); }
+
+    // Возвращает индекс самой последней свечи в списке
+    default int getEndIndex() { return size() - 1; }
 }
 
