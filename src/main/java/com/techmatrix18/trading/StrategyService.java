@@ -580,16 +580,26 @@ public class StrategyService {
 }
 
 /*
-Как использовать:
+Пример построения комплексной торговой стратегии на вход (BUY)
 
-// Цена пробила среднюю Боллинджера вверх
-Rule rule1 = new CrossedUpRule(bollinger);
+// 1. Выделяем необходимые линии индикаторов как независимые Indicator<Double>
+Indicator<Double> closePrice = index -> series.getClose(index);
+Indicator<Double> bbMiddleLine = index -> bollingerIndicator.getValue(index).middle();
 
-// RSI выше 30
-Rule rule2 = new OverIndicatorRule(rsi, 30.0);
+// 2. Строим отдельные логические правила:
+// Условие А: Цена закрытия пробила Среднюю линию Боллинджера (Basis) снизу вверх
+Rule rule1 = new CrossedUpRule(closePrice, bbMiddleLine);
 
-// Итоговая стратегия
+// Условие Б: Индикатор RSI находится выше уровня 30.0 (выход из зоны перепроданности)
+Rule rule2 = new OverIndicatorRule(rsiIndicator, 30.0);
+
+// 3. Объединяем правила через Fluent API (условия должны выполниться одновременно)
 Rule entryRule = rule1.and(rule2);
+
+// 4. Проверяем сигнал на последней закрытой свече 'i'
+if (entryRule.isSatisfied(i)) {
+    telegramService.sendMessageForAll("🎯 СИГНАЛ НА ВХОД: Боллинджер пробит вверх + RSI подтверждает!");
+}
 
 */
 
