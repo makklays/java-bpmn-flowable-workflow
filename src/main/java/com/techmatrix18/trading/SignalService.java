@@ -13,7 +13,6 @@ import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.util.Map;
 
 /**
  * SignalService is responsible for analyzing price movements and generating trading signals.
@@ -63,11 +62,10 @@ public class SignalService {
         double goldLevel = levels.lvl618();
 
         // 4. Проверяем пробой "золотого сечения"
-        if (isLevelBrokenDown(currentPrice, prevPrice, goldLevel)) {
+        if (prevPrice >= goldLevel && currentPrice < goldLevel) {
             System.out.println("СИГНАЛ: Цена " + symbol + " пробила уровень 0.618 вниз!");
         }
     }
-
 
     // Метод проверяет, пересекла ли цена уровень сверху вниз (медвежий сигнал)
     public boolean isLevelBrokenDown(double currentPrice, double previousPrice, double levelPrice) {
@@ -131,7 +129,6 @@ public class SignalService {
             }
         }
     }
-
 
     // Этот метод демонстрирует (с тестовыми данными), как можно объединить разные правила для генерации комплексных сигналов
     // Отправка сигналов (текстовых сообщений) в канал Телеграм (без скриншота графика)

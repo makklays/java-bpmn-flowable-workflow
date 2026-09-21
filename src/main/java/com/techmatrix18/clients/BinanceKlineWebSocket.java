@@ -1,10 +1,7 @@
 package com.techmatrix18.clients;
 
 import com.techmatrix18.model.Candle;
-import com.techmatrix18.rabbitmq.CandleListener;
 import com.techmatrix18.rabbitmq.CandlePublisher;
-import com.techmatrix18.trading.indicators.RsiIndicator;
-import com.techmatrix18.trading.series.LiveCandleSeries;
 import org.java_websocket.client.WebSocketClient;
 import org.java_websocket.handshake.ServerHandshake;
 import org.json.JSONArray;
@@ -13,12 +10,8 @@ import org.springframework.web.client.RestTemplate;
 
 import java.math.BigDecimal;
 import java.net.URI;
-import java.time.Instant;
-import java.time.LocalDateTime;
-import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 /**
@@ -50,6 +43,7 @@ import java.util.stream.Collectors;
  * @since 16.04.2026
  * @version 0.0.1
  */
+
 public class BinanceKlineWebSocket {
     private WebSocketClient webSocketClient;
     private String symbol;
@@ -220,7 +214,13 @@ public class BinanceKlineWebSocket {
             .map(sym -> {
                 // Теперь компилятор знает, что sym — это String
                 String s = sym.toLowerCase().trim();
-                return String.format("%s@kline_%s/%s@bookTicker", s, this.timeframe.toLowerCase(), s);
+                // Если мы запускаем клиент специально для тиков
+                if ("ticks".equalsIgnoreCase(this.timeframe)) {
+                    return String.format("%s@bookTicker", s);
+                }
+                // Для обычных таймфреймов (15m, 1h, 1d) подписываемся ТОЛЬКО на свечи kline!
+                return String.format("%s@kline_%s", s, this.timeframe.toLowerCase());
+                //return String.format("%s@kline_%s/%s@bookTicker", s, this.timeframe.toLowerCase(), s);
             })
             .collect(Collectors.joining("/"));
 

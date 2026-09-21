@@ -4,6 +4,7 @@ import com.techmatrix18.config.RabbitConfig;
 import com.techmatrix18.model.Candle;
 import com.techmatrix18.service.PriceStorage;
 import com.techmatrix18.trading.SignalService;
+import com.techmatrix18.trading.StrategyService;
 import com.techmatrix18.trading.indicators.RsiIndicator;
 import com.techmatrix18.trading.series.LiveCandleSeries;
 import com.techmatrix18.websocket.MarketDataWebSocketServer;
@@ -11,7 +12,6 @@ import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -23,10 +23,12 @@ import java.util.concurrent.ConcurrentHashMap;
  * @since 16.04.2026
  * @version 0.0.1
  */
+
 @Service
 public class CandleListener {
 
     private final SignalService signalService;
+    private final StrategyService strategyService;
     private final PriceStorage priceStorage;
     private final MarketDataWebSocketServer webSocketServer;
 
@@ -34,13 +36,22 @@ public class CandleListener {
     private final Map<String, LiveCandleSeries> seriesMap = new ConcurrentHashMap<>();
     private final Map<String, RsiIndicator> rsiMap = new ConcurrentHashMap<>();
 
-    public CandleListener(SignalService signalService, PriceStorage priceStorage, MarketDataWebSocketServer webSocketServer) {
+    public CandleListener(SignalService signalService, PriceStorage priceStorage, MarketDataWebSocketServer webSocketServer, StrategyService strategyService) {
         this.signalService = signalService;
         this.priceStorage = priceStorage;
         this.webSocketServer = webSocketServer;
+        this.strategyService = strategyService;
     }
 
-    // Получаю 1 минутные свечи с ценами (раз в минуту)
+    /**
+     * Получаю цены разных активов из WebSocket stream через RabbitMQ и обрабатываю их.
+     * Цена приходит в виде Candle (раз в минуту или исторические данные), которая содержит:
+     *  - поле HISTORY - если это исторические данные (отправленные при старте программы для прогрева индикаторов)
+     *  - без поля HISTORY - если это живые данные (раз в минуту)
+     *
+     * Для ОНЛАЙН:
+     * Прогреваю и заполняю LiveCandleSeries для каждого символа и таймфрейма, чтобы индикаторы могли работать.
+     */
     @RabbitListener(queues = RabbitConfig.QUEUE_PRICES)
     public void onMessage(Candle candle) {
         // Получаем или создаем серию для конкретного символа
@@ -60,27 +71,26 @@ public class CandleListener {
             System.out.println(">>> RECEIVED : " + key + " | Current size: " + series.size());
         }
 
-        // 2. Наполнение серии (только финализированные данные)
+        // 1. Наполнение серии (только финализированные данные)
         if (candle.isClosed() || "HISTORY".equals(type)) {
             series.addCandle(candle);
         }
 
-        // 2. Берем индикатор (или создаем и прогреваем, если новый)
-        RsiIndicator rsiIndicator = rsiMap.computeIfAbsent(key, k -> {
-            RsiIndicator newRsi = new RsiIndicator();
-            // Пробуем прогреть, если в серии уже что-то есть
-            if (series.size() >= 14) {
-                newRsi.prepare(series);
-            }
-            return newRsi;
-        });
+        // 2. Достаем или создаем индикатор БЕЗ прогрева внутри computeIfAbsent
+        RsiIndicator rsiIndicator = rsiMap.computeIfAbsent(key, k -> new RsiIndicator());
 
         // 3. Работа с живым потоком (не история)
         if (!"HISTORY".equals(type)) {
+
+            // КРИТИЧЕСКИ ВАЖНО: Если индикатор еще не видел историю, прогреваем его ОДИН РАЗ прямо перед расчетами живого потока
+            // (Вызов prepare здесь безопасен, так как вся история уже гарантированно лежит в 'series')
+            if (series.size() >= 14) {
+                rsiIndicator.prepare(series);
+            }
+
             double currentRsi = 50.0;
 
             // Если свеча закрылась — запускаем тяжелую аналитику
-            // Добавляем проверку на размер серии ПЕРЕД расчетом
             if (series.size() > 14) {
                 if (candle.isClosed()) {
                     // Фиксируем значение в истории индикатора
@@ -94,14 +104,28 @@ public class CandleListener {
                 }
             }
 
-            // Добавляем значение в объект перед отправкой (убедись, что поле есть в классе Candle)
+            // Добавляем значение в объект перед отправкой
             candle.getIndicators().put("rsi", currentRsi / 100.0);
 
             // Шлем в React для обновления графиков и спидометров
             webSocketServer.broadcast(candle);
 
-            // Обновляем текущую цену в хранилище (только актуальные данные)
+            // Обновляем текущую цену в хранилище
             priceStorage.updatePrice(symbolName, candle.getClose());
+        }
+
+        // Внутри CandleListener -> onMessage(Candle candle)
+        // 4. МУЛЬТИ-ТАЙМФРЕЙМ ЛОГИКА (1h + 1d)
+        if (!"HISTORY".equals(type) && "1h".equals(timeframe) && candle.isClosed()) {
+            String key1d = symbolName + "_1d";
+            LiveCandleSeries series1d = seriesMap.get(key1d); // Достаем дневную серию из кэша
+
+            if (series1d != null && series.size() >= 30 && series1d.size() >= 30) {
+                System.out.println("⚡ Запуск мульти-таймфрейм логики (1h + 1d) для " + symbolName);
+                strategyService.runMultiTimeframeLogic(symbolName, series, series1d);
+            } else {
+                System.out.println("⚠️ Не удалось запустить MTF: дневная серия (1d) для " + symbolName + " еще не прогрета или мало свечей.");
+            }
         }
     }
 
@@ -114,9 +138,10 @@ public class CandleListener {
         Double bid = (Double) tickData.get("bid");
         Double ask = (Double) tickData.get("ask");
 
-        // Обновляю PriceStorage более точной ценой (например, средней между bid и ask)
+        // 1. Считаем среднюю цену
         double midPrice = (bid + ask) / 2.0;
-        priceStorage.updatePrice(symbol, BigDecimal.valueOf(midPrice));
+        BigDecimal midPriceBd = BigDecimal.valueOf(midPrice);
+        priceStorage.updatePrice(symbol, midPriceBd);
 
         // Отправляю быстрые данные на frontend через WebSocket
         // создал на frontend отдельный обработчик для "BID_ASK" сообщений
@@ -126,8 +151,17 @@ public class CandleListener {
         // double spread = ask - bid;
         // signalService.checkScalpingSignals(symbol, bid, ask);
 
-        // Вызываю метод анализа из SignalService - если хочу анализировать на основании цен из тиков
-        //signalService.analyzeMarket(symbolId, series);
+        // Достаем РЕАЛЬНЫЕ серии из памяти, которые ведет CandleListener
+        String key1h = symbol + "_1h";  // Наш рабочий таймфрейм
+        String key1d = symbol + "_1d";  // Наш старший тренд
+
+        LiveCandleSeries series1h = seriesMap.get(key1h);
+        LiveCandleSeries series1d = seriesMap.get(key1d);
+
+        // Запускаем анализ только если обе серии уже существуют и прогреты
+        if (series1h != null && series1d != null) {
+            strategyService.checkTickSignal(symbol, midPrice, series1h, series1d);
+        }
     }
 }
 

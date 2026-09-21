@@ -7,18 +7,19 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import static java.util.Map.entry;
 
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 /**
- * WebSocketLauncher -
+ * WebSocketLauncher - класс для запуска WebSocket клиента Binance и публикации свечей в RabbitMQ.
+ * А также для получения исторических данных и прогрева индикаторов.
  *
  * @author Alexander Kuziv <makklays@gmail.com>
  * @company TechMatrix18
  * @since 16.04.2026
  * @version 0.0.1
  */
+
 @Configuration
 public class WebSocketLauncher {
 
@@ -41,25 +42,103 @@ public class WebSocketLauncher {
         entry("SOLUSDT", 42)
     );
 
+    //-- Spring Boot находит такие бины и выполняет их код сразу после полного запуска контекста приложения --
+
+    @Bean
+    public CommandLineRunner appInitializer(CandlePublisher publisher) {
+        return args -> {
+            System.out.println("====== 🚀 ЗАПУСК СИСТЕМЫ ИНИЦИАЛИЗАЦИИ РОБОТА ======");
+
+            // ==========================================
+            // ШАГ 1: ПОСЛЕДОВАТЕЛЬНЫЙ ПРОГРЕВ ИСТОРИИ
+            // ==========================================
+            try {
+                // Прогрев D1
+                System.out.println(">>> [1/3] Загрузка истории 1d...");
+                BinanceKlineWebSocket clientD1 = new BinanceKlineWebSocket("BTC", 1, "1d", publisher);
+                clientD1.warmUpAll(symbols);
+                Thread.sleep(1000); // Небольшая пауза, чтобы не спамить API Binance
+
+                // Прогрев H1
+                System.out.println(">>> [2/3] Загрузка истории 1h...");
+                BinanceKlineWebSocket clientH1 = new BinanceKlineWebSocket("BTC", 1, "1h", publisher);
+                clientH1.warmUpAll(symbols);
+                Thread.sleep(1000);
+
+                // Прогрев M15
+                System.out.println(">>> [3/3] Загрузка истории 15m...");
+                BinanceKlineWebSocket clientM15 = new BinanceKlineWebSocket("BTC", 1, "15m", publisher);
+                clientM15.warmUpAll(symbols);
+                Thread.sleep(1000);
+
+                System.out.println("✅ ИСТОРИЯ ВСЕХ ТАЙМФРЕЙМОВ УСПЕШНО ЗАГРУЖЕНА И ИНДИКАТОРЫ ПРОГРЕТЫ.");
+            } catch (Exception e) {
+                System.err.println("❌ КРИТИЧЕСКАЯ ОШИБКА ПРИ ПРОГРЕВЕ ИСТОРИИ: " + e.getMessage());
+                // Решите, тушить ли приложение при ошибке прогрева:
+                // System.exit(1);
+            }
+
+            // ==========================================
+            // ШАГ 2: ЗАПУСК ЖИВЫХ ВЕБ-СОКЕТОВ (ONLINE)
+            // ==========================================
+            System.out.println("====== ⚡ ВКЛЮЧЕНИЕ ЖИВОГО ПОТОКА ДАННЫХ (WEBSOCKETS) ======");
+
+            // 1. Запуск комбинированного потока для ВСЕХ монет и таймфрейма 1d
+            new BinanceKlineWebSocket("BTC", 1, "1d", publisher).connectCombined(symbols);
+            System.out.println(">>> Живой поток 1d подключен.");
+
+            // 2. Запуск комбинированного потока для ВСЕХ монет и таймфрейма 1h
+            new BinanceKlineWebSocket("BTC", 1, "1h", publisher).connectCombined(symbols);
+            System.out.println(">>> Живой поток 1h подключен.");
+
+            // 3. Запуск комбинированного потока для ВСЕХ монет и таймфрейма 15m
+            new BinanceKlineWebSocket("BTC", 1, "15m", publisher).connectCombined(symbols);
+            System.out.println(">>> Живой поток 15m подключен.");
+
+            // 4. Запуск отдельных 1-минутных (1m) потоков для ВСЕХ монет
+            // (из метода startup ниже - перенесен сюда для последовательного запуска из одного метода)
+            symbols.forEach((symbol, id) -> {
+                CompletableFuture.runAsync(() -> {
+                    try {
+                        BinanceKlineWebSocket clientM1 = new BinanceKlineWebSocket(symbol, id, "1m", publisher);
+                        clientM1.connect(symbol, "1m");
+                    } catch (Exception e) {
+                        System.err.println("Ошибка в сокете 1m для " + symbol + ": " + e.getMessage());
+                    }
+                });
+            });
+            System.out.println(">>> Живые потоки 1m запущены в асинхронных фоновых потоках.");
+
+            // 5. Запуск комбинированного потока для ВСЕХ монет --> для ТИКОВ (Bid/Ask)
+            // (Используем метод, настроенный под bookTicker стрим)
+            // Единственный и чистый поток ТИКОВ (передаем ключевое слово "ticks" вместо "1m")
+            BinanceKlineWebSocket tickClient = new BinanceKlineWebSocket("BTCUSDT", 1, "ticks", publisher);
+            tickClient.connectCombined(symbols);
+            System.out.println(">>> Единый комбинированный поток ТИКОВ (Bid/Ask) успешно активирован.");
+
+            System.out.println("====== 🎉 РОБОТ ПОЛНОСТЬЮ ГОТОВ К РАБОТЕ ======");
+        };
+    }
+
     // Если монет < 10 - можно запускать по одной в отдельных потоках.
     // Получаю 1 минутные свечи для каждой монеты
-    @Bean
+    /*@Bean
     public CommandLineRunner startup(CandlePublisher candlePublisher) {
         return args -> {
+            System.out.println("🚀 Инициализация WebSocket для СВЕЧЕЙ (Klines)...");
             // Список монет из переменной
             // TODO: вынести в конфиг или базу, чтобы не менять код при добавлении монет
             symbols.forEach((symbol, id) -> {
                 CompletableFuture.runAsync(() -> {
                     try {
-                        System.out.println(">>> Запуск потока для: " + symbol);
                         BinanceKlineWebSocket client = new BinanceKlineWebSocket(symbol, id, "1m", candlePublisher);
                         client.connect(symbol, "1m");
+                        System.out.println(">>> Запущен поток Klines для: " + symbol);
                     } catch (Exception e) {
-                        System.err.println("Ошибка в сокете для " + symbol + ": " + e.getMessage());
+                        System.err.println("Ошибка в сокете Klines для " + symbol + ": " + e.getMessage());
                     }
                 });
             });
-
             System.out.println(">>> Все WebSocket подключения инициированы в фоновых потоках");
         };
     }
@@ -69,17 +148,23 @@ public class WebSocketLauncher {
     @Bean
     public CommandLineRunner startupCombined(CandlePublisher candlePublisher) {
         return args -> {
-            // 1. Берем любую монету как "стартовую" (для конструктора)
-            String firstSymbol = symbols.keySet().iterator().next();
+            System.out.println("🚀 Инициализация единого WebSocket для ТИКОВ (Bid/Ask)...");
+            try {
+                // 1. Берем любую монету как "стартовую" (для конструктора)
+                String firstSymbol = symbols.keySet().iterator().next();
 
-            // 2. Создаем ОДИН клиент
-            // ВАЖНО: передайте в конструктор или метод саму карту 'coins',
-            // чтобы внутри onMessage вы могли делать: candle.setSymbolId(coins.get(currentSymbol))
-            // TODO: переделать конструктор, чтобы он был универсальным для обеих функций
-            BinanceKlineWebSocket client = new BinanceKlineWebSocket(firstSymbol, 1, "1m", candlePublisher);
+                // 2. Создаем ОДИН клиент
+                // ВАЖНО: передайте в конструктор или метод саму карту 'coins',
+                // чтобы внутри onMessage вы могли делать: candle.setSymbolId(coins.get(currentSymbol))
+                // TODO: переделать конструктор, чтобы он был универсальным для обеих функций
+                BinanceKlineWebSocket client = new BinanceKlineWebSocket(firstSymbol, 1, "1m", candlePublisher);
 
-            // 3. Запускаем ОДНО комбинированное соединение для всех монет сразу
-            client.connectCombined(symbols);
+                // 3. Запускаем ОДНО комбинированное соединение для всех монет сразу
+                client.connectCombined(symbols);
+                System.out.println(">>> Комбинированный поток ТИКОВ успешно запущен для всех монет.");
+            } catch (Exception e) {
+                System.err.println("Ошибка запуска комбинированного потока тиков: " + e.getMessage());
+            }
         };
     }
 
@@ -120,7 +205,7 @@ public class WebSocketLauncher {
             System.out.println(">>> Индикаторы прогреты 1d. Запуск WebSocket...");
             clientD1.connectCombined(symbols); // Слушает D1 и публикует онлайн в RabbitMQ для всех монет
         };
-    }
+    }*/
 
     // Если монет > 20
     /*@Bean

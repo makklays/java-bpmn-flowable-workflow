@@ -20,6 +20,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 /**
@@ -58,32 +59,136 @@ public class StrategyService {
     private final TelegramService telegramService;
     private final TimeframeAggregator timeframeAggregator;
 
+    // Карты состояний для предотвращения спама (Ключ = Имя монеты, Значение = Был ли сигнал)
+    private final Map<String, Boolean> activeLongSignals = new ConcurrentHashMap<>();
+    private final Map<String, Boolean> activeShortSignals = new ConcurrentHashMap<>();
+
     public StrategyService(TelegramService telegramService, TimeframeAggregator timeframeAggregator) {
         this.telegramService = telegramService;
         this.timeframeAggregator = timeframeAggregator;
     }
 
+    /**
+     * Основной метод, который вызывается ИЗ КАНАЛА с меньшим таймфреймом (15m или 1h) в CandleListener
+     * 21.09.2026:
+     */
+    public void runMultiTimeframeLogic(String symbol, CandleSeries series1H, CandleSeries series1d) {
+        // Проверяем, что в обеих сериях накопилось достаточно свечей для расчетов
+        if (series1H.size() < 30 || series1d.size() < 30) return;
+
+        // Ключ для блокировки спама именно для рабочего таймфрейма этой монеты
+        String spamKey = symbol + "_1h";
+
+        // ========================================================
+        // ЭКРАН 1: ОПРЕДЕЛЯЕМ СТАРШИЙ ТРЕНД НА 1h СВЕЧАХ
+        // ========================================================
+        bollingerIndicator.prepare(series1d); // Считаем Боллинджер по часовым свечам
+        int lastIdx1h = series1d.size() - 1;
+
+        double price1h = series1d.getClose(lastIdx1h);
+        double middleLine1h = bollingerIndicator.getValue(lastIdx1h).middle();
+
+        // Фильтры тренда:
+        boolean isTrendUp1h = price1h > middleLine1h;   // Тренд вверх, если цена на 1h выше средней линии
+        boolean isTrendDown1h = price1h < middleLine1h; // Тренд вниз, если цена на 1h ниже средней линии
+
+        // ========================================================
+        // ЭКРАН 2: ИЩЕМ СИГНАЛ НА РАБОЧЕМ ТАЙМФРЕЙМЕ M15
+        // ========================================================
+        rsiIndicator.prepare(series1H);        // Пересчитываем RSI под 1H свечи
+        bollingerIndicator.prepare(series1H);  // Пересчитываем Боллинджер под 1H свечи
+        fibonacciIndicator.prepare(series1H);  // Пересчитываем Фибо под 1H свечи
+
+        Indicator<Double> closePriceM15 = index -> series1H.getClose(index);
+        Indicator<Double> lowerLineM15 = index -> bollingerIndicator.getValue(index).lower();
+
+        int i = series1H.size() - 1;
+
+        // Правила рабочего таймфрейма
+        Rule rsiOversold = new UnderIndicatorRule(rsiIndicator, 30.0);
+        Rule bbCrossUp = new CrossedUpRule(closePriceM15, lowerLineM15);
+        Rule entrySignalM15 = rsiOversold.and(bbCrossUp);
+
+
+        // ========================================================
+        // ЭКРАН 3: СВЕРКА СИГНАЛА С ТРЕНДОМ И ВХОД
+        // ========================================================
+
+        // --- ПРОГРАММА ЛОНГ ---
+        if (entrySignalM15.isSatisfied(i)) {
+            // КРИТИЧЕСКИЙ ФИЛЬТР: Входим в лонг на 1H только если на 1h тренд БЫЧИЙ
+            if (isTrendUp1h) {
+                boolean alreadySent = activeLongSignals.getOrDefault(spamKey, false);
+
+                if (!alreadySent) {
+                    BigDecimal currentPrice = BigDecimal.valueOf(series1H.getClose(i));
+                    // ... (Ваш расчет математики TP/SL и рисков как в предыдущих примерах) ...
+
+                    String text = String.format("🚀 [MTF СИГНАЛ] ВХОД ЛОНГ по %s (1h)\n" +
+                                    "Фильтр тренда (1d): ТРЕНД ВОСХОДЯЩИЙ (Цена %.2f > Middle %.2f)\n" +
+                                    "Цена входа: %s USDT",
+                            symbol, price1h, middleLine1h, currentPrice);
+
+                    telegramService.sendMessageForAll(text);
+                    activeLongSignals.put(spamKey, true);
+                }
+            } else {
+                System.out.println("⚠️ СИГНАЛ ЛОНГ по " + symbol + " на 1h проигнорирован: старший тренд 1d против нас (Медвежий).");
+            }
+        } else {
+            activeLongSignals.put(spamKey, false);
+        }
+
+        // --- ПРОГРАММА ШОРТ ---
+        Rule rsiExit = new CrossedDownRule(rsiIndicator, 70.0);
+        Rule fibTarget = new PriceNearFibRule(series1H, fibonacciIndicator, FibLevels::lvl236, 0.001);
+        Rule exitSignalM15 = rsiExit.or(fibTarget);
+
+        if (exitSignalM15.isSatisfied(i)) {
+            // КРИТИЧЕСКИЙ ФИЛЬТР: Входим в шорт на 1H только если на 1h тренд МЕДВЕЖИЙ
+            if (isTrendDown1h) {
+                boolean alreadySent = activeShortSignals.getOrDefault(spamKey, false);
+
+                if (!alreadySent) {
+                    BigDecimal currentPrice = BigDecimal.valueOf(series1H.getClose(i));
+                    // ... (Ваш зеркальный расчет математики TP/SL для шорта) ...
+
+                    String text = String.format("🔻 [MTF СИГНАЛ] ВХОД ШОРТ по %s (1h)\n" +
+                                    "Фильтр тренда (1d): ТРЕНД НИСХОДЯЩИЙ (Цена %.2f < Middle %.2f)\n" +
+                                    "Цена входа: %s USDT",
+                            symbol, price1h, middleLine1h, currentPrice);
+
+                    telegramService.sendMessageForAll(text);
+                    activeShortSignals.put(spamKey, true);
+                }
+            } else {
+                System.out.println("⚠️ СИГНАЛ ШОРТ по " + symbol + " на 1h проигнорирован: старший тренд 1d против нас (Бычий).");
+            }
+        } else {
+            activeShortSignals.put(spamKey, false);
+        }
+    }
+
     // Соберем полноценную торговую систему.
+    // 21.09.2026: Обновленный метод для работы с данными тиками и свечами в реальном времени.
     // Допустим, мы хотим покупать при сильном откате к Фибоначчи и продавать при перекупленности.
     public void runLogic(String symbol, CandleSeries series) {
         // Ждем накопления данных (например, для корректного расчета скользящих средних)
         if (series.size() < 200) return;
 
-        // 1. ПОДГОТОВКА: Обновляем кэш индикаторов для всей текущей серии
+        // 1. Подготовка индикаторов
         rsiIndicator.prepare(series);
         bollingerIndicator.prepare(series);
         fibonacciIndicator.prepare(series);
-        // macdIndicator.prepare(series); // добавьте остальные, если они используются
 
-        // 2. ИНДИКАТОР ЦЕНЫ: Краткая и быстрая обертка через лямбду вместо громоздкого анонимного класса
+        // 2. Обертки линий
         Indicator<Double> closePrice = index -> series.getClose(index);
-
         // Выделяем конкретные линии Боллинджера для использования в правилах
         Indicator<Double> upperLine = index -> bollingerIndicator.getValue(index).upper();
         Indicator<Double> middleLine = index -> bollingerIndicator.getValue(index).middle();
         Indicator<Double> lowerLine = index -> bollingerIndicator.getValue(index).lower();
 
-        // 3. ТЕКУЩИЙ ИНДЕКС: Работаем строго с последней закрытой свечой (онлайн-режим)
+        // ТЕКУЩИЙ ИНДЕКС: Работаем строго с последней закрытой свечой (онлайн-режим)
         int i = series.size() - 1;
 
         // --- ССЫЛКА НА ТЕКУЩУЮ СДЕЛКУ ---
@@ -91,37 +196,102 @@ public class StrategyService {
         // на уровне полей класса (сервиса), чтобы робот знал, открыта ли сейчас сделка.
         // Ниже приведена логика проверки правил:
 
-        // 4. ПРАВИЛА ВХОДА (BUY)
-        Rule rsiOversold = new UnderIndicatorRule(rsiIndicator, 30.0); // RSI < 30
-
-        // ИСПРАВЛЕНО: Раньше в CrossedUpRule передавался весь bollingerIndicator (что вызывало ошибку).
-        // Теперь передаем конкретную линию — например, цена пересекает нижнюю линию Боллинджера вверх, возвращаясь в канал
+        // 3. Правила входа (BUY)
+        Rule rsiOversold = new UnderIndicatorRule(rsiIndicator, 30.0);
         Rule bbCrossUp = new CrossedUpRule(closePrice, lowerLine);
-
         Rule entrySignal = rsiOversold.and(bbCrossUp);
 
-        // Проверяем сигнал на вход
+        // 4. ЕСЛИ СИГНАЛ СРАБОТАЛ — управляем сделкой (перенесено из старого SignalService)
         if (entrySignal.isSatisfied(i)) {
-            String msg = String.format("✅ [%s] ВХОД ЛОНГ: RSI в зоне перепроданности + Цена отскочила от нижней ленты Боллинджера!", symbol);
-            telegramService.sendMessageForAll(msg);
-            System.out.println(msg + " на свече №" + i);
-            // exchangeService.placeMarketBuyOrder(symbol); // Пример отправки ордера
+            // Проверяем, отправляли ли мы уже этот сигнал на предыдущих свечах
+            boolean alreadySent = activeLongSignals.getOrDefault(symbol, false);
+
+            if (!alreadySent) {
+                Candle lastCandle = series.getCandle(i);
+                BigDecimal currentPrice = lastCandle.getClose();
+
+                // Менеджмент капитала и рисков (Бизнес-логика Стратегии!)
+                BigDecimal slPercent = new BigDecimal("0.01"); // 1%
+                BigDecimal tpPercent = new BigDecimal("0.02"); // 2%
+
+                BigDecimal tp = currentPrice.add(currentPrice.multiply(tpPercent)).setScale(2, RoundingMode.HALF_UP);
+                BigDecimal sl = currentPrice.subtract(currentPrice.multiply(slPercent)).setScale(2, RoundingMode.HALF_UP);
+
+                BigDecimal priceDiffSL = currentPrice.subtract(sl).abs();
+                BigDecimal riskPercent = priceDiffSL.divide(currentPrice, 4, RoundingMode.HALF_UP).multiply(new BigDecimal("100")).setScale(2, RoundingMode.HALF_UP);
+                BigDecimal priceDiffTP = currentPrice.subtract(tp).abs();
+                BigDecimal rrRatio = priceDiffTP.divide(priceDiffSL, 1, RoundingMode.HALF_UP);
+
+                String text = String.format("📊 СТРАТЕГИЯ СРАБОТАЛА: ВХОД ЛОНГ по %s\n" +
+                                "Цена входа: %s USDT\n" +
+                                "TP (Target): %s | SL (Stop): %s\n" +
+                                "Риск на сделку: %s%% | RiskReward: 1:%s",
+                        symbol, currentPrice, tp, sl, riskPercent, rrRatio);
+
+                telegramService.sendMessageForAll(text);
+
+                // Тут будет вызов сервиса биржи для реальной покупки:
+                // exchangeService.openPosition(symbol, "LONG", currentPrice, tp, sl);
+
+                // Включаем флаг блокировки спама для ЛОНГА по этой монете
+                activeLongSignals.put(symbol, true);
+
+                // Гасим сигнал ШОРТА, так как мы развернулись в лонг
+                activeShortSignals.put(symbol, false);
+            }
+        } else {
+            // Если условия сигнала ЛОНГ больше не выполняются, сбрасываем флаг,
+            // чтобы при следующем заходе в зону фильтр пропустил новое уведомление
+            activeLongSignals.put(symbol, false);
         }
 
         // 5. ПРАВИЛА ВЫХОДА (SELL)
         Rule rsiExit = new CrossedDownRule(rsiIndicator, 70.0); // RSI пересекает 70 сверху вниз (выход из перекупленности)
-
-        // ИСПРАВЛЕНО: Вместо опасной строки "level_236" используем строгую типизацию через ссылку на метод рекорда FibLevels
         Rule fibTarget = new PriceNearFibRule(series, fibonacciIndicator, FibLevels::lvl236, 0.001); // Близость к уровню 23.6%
-
         Rule exitSignal = rsiExit.or(fibTarget);
 
-        // Проверяем сигнал на выход
+        // 6. ЕСЛИ СИГНАЛ СРАБОТАЛ — управляем сделкой SHORT / ВЫХОД
         if (exitSignal.isSatisfied(i)) {
-            String msg = String.format("❌ [%s] ВЫХОД ИЗ ПОЗИЦИИ: Достигнут целевой уровень Фибоначчи 23.6%% или RSI развернулся вниз!", symbol);
-            telegramService.sendMessageForAll(msg);
-            System.out.println(msg + " на свече №" + i);
-            // exchangeService.placeMarketSellOrder(symbol); // Пример закрытия позиции
+            // Проверяем, отправляли ли мы уже шорт-сигнал ранее
+            boolean alreadySent = activeShortSignals.getOrDefault(symbol, false);
+
+            if (!alreadySent) {
+                Candle lastCandle = series.getCandle(i);
+                BigDecimal currentPrice = lastCandle.getClose();
+
+                BigDecimal slPercent = new BigDecimal("0.01"); // 1%
+                BigDecimal tpPercent = new BigDecimal("0.02"); // 2%
+
+                // ЗЕРКАЛЬНО ДЛЯ SHORT: Тейк ниже, Стоп выше цены входа
+                BigDecimal tp = currentPrice.subtract(currentPrice.multiply(tpPercent)).setScale(2, RoundingMode.HALF_UP);
+                BigDecimal sl = currentPrice.add(currentPrice.multiply(slPercent)).setScale(2, RoundingMode.HALF_UP);
+
+                // Расчет риска (для шорта формула разницы модулей остается точной)
+                BigDecimal priceDiffSL = currentPrice.subtract(sl).abs();
+                BigDecimal riskPercent = priceDiffSL.divide(currentPrice, 4, RoundingMode.HALF_UP).multiply(new BigDecimal("100")).setScale(2, RoundingMode.HALF_UP);
+                BigDecimal priceDiffTP = currentPrice.subtract(tp).abs();
+                BigDecimal rrRatio = priceDiffTP.divide(priceDiffSL, 1, RoundingMode.HALF_UP);
+
+                String text = String.format("🔻 СТРАТЕГИЯ СРАБОТАЛА: ВХОД ШОРТ (ВЫХОД) по %s\n" +
+                                "Причина: Достигнут уровень Фибо 23.6%% или RSI развернулся из перекупленности\n" +
+                                "Цена входа: %s USDT\n" +
+                                "TP (Target): %s | SL (Stop): %s\n" +
+                                "Риск на сделку: %s%% | RiskReward: 1:%s",
+                        symbol, currentPrice, tp, sl, riskPercent, rrRatio);
+
+                telegramService.sendMessageForAll(text);
+                System.out.println(text + " на свече №" + i);
+                // exchangeService.openPosition(symbol, "SHORT", currentPrice, tp, sl);
+
+                // Включаем флаг блокировки спама для ШОРТА по этой монете
+                activeShortSignals.put(symbol, true);
+
+                // Гасим сигнал ЛОНГА, так как мы ушли в шорт
+                activeLongSignals.put(symbol, false);
+            }
+        } else {
+            // Если условия сигнала ШОРТ пропали, сбрасываем флаг для будущих сигналов
+            activeShortSignals.put(symbol, false);
         }
     }
 
@@ -548,9 +718,9 @@ public class StrategyService {
      * ИСПРАВЛЕНО: Находит уровни поддержки и сопротивления на основе скользящего окна (lookback).
      * Защищено от заглядывания в будущее (Look-ahead bias).
      *
-     * @param series универсальная серия свечей
+     * @param series       универсальная серия свечей
      * @param currentIndex текущая свеча в цикле бэктестера
-     * @param lookback глубина поиска назад (например, 100 свечей)
+     * @param lookback     глубина поиска назад (например, 100 свечей)
      */
     private List<PriceLevelDto> findSupportResistanceLevels(CandleSeries series, int currentIndex, int lookback) {
         List<PriceLevelDto> levels = new ArrayList<>();
@@ -577,6 +747,50 @@ public class StrategyService {
         levels.add(new PriceLevelDto(BigDecimal.valueOf(minLow), "SUPPORT"));
 
         return levels;
+    }
+
+    /**
+     * Метод для проверки сигнала на основе старшего таймфрейма (HTF) и младшего таймфрейма (LTF).
+     */
+    public void checkTickSignal(String symbol, double midPrice, CandleSeries seriesLtf, CandleSeries seriesHtf) {
+        // Защита: если истории в сериях еще недостаточно для индикаторов — выходим
+        if (seriesLtf.size() < 30 || seriesHtf.size() < 30) return;
+
+        // 1. Инициализируем и подготавливаем индикаторы для СТАРШЕГО таймфрейма (htf)
+        BollingerIndicator bollingerHtf = new BollingerIndicator(20, 2.0);
+        bollingerHtf.prepare(seriesHtf);
+
+        int lastIdxHtf = seriesHtf.size() - 1;
+        double priceHtf = seriesHtf.getClose(lastIdxHtf);
+        double middleLineHtf = bollingerHtf.getValue(lastIdxHtf).middle();
+
+        // Определяем старший тренд
+        boolean isTrendUp = priceHtf > middleLineHtf;
+
+        // 2. Инициализируем и подготавливаем индикаторы для РАБОЧЕГО таймфрейма (ltf)
+        BollingerIndicator bollingerLtf = new BollingerIndicator(20, 2.0);
+        bollingerLtf.prepare(seriesLtf);
+
+        int lastIdxLtf = seriesLtf.size() - 1;
+        double lowerBb = bollingerLtf.getValue(lastIdxLtf).lower();
+
+        String spamKey = symbol + "_TICK";
+
+        // 3. ПРАВИЛО ВХОДА В ЛОНГ НА ОСНОВЕ ЦЕНЫ ТИКА
+        // Проверяем: старший тренд вверх И текущая цена тика пробила нижний Боллинджер рабочего таймфрейма
+        if (isTrendUp && midPrice <= lowerBb) {
+            boolean alreadySent = activeLongSignals.getOrDefault(spamKey, false);
+
+            if (!alreadySent) {
+                String text = String.format("🔥 [ONLINE ТИК-СИГНАЛ] ВХОД ЛОНГ по %s\n" +
+                                "Цена тика (%.2f) пробила нижнюю ленту Боллинджера (%.2f)!\n" +
+                                "Старший тренд подтверждает рост 📈",
+                        symbol, midPrice, lowerBb);
+
+                telegramService.sendMessageForAll(text);
+                activeLongSignals.put(spamKey, true); // Защита от спама
+            }
+        }
     }
 }
 
