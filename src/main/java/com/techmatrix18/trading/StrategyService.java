@@ -53,6 +53,10 @@ public class StrategyService {
     // Эти требуют параметров, их создадим позже или здесь с дефолтами
     private final BollingerIndicator bollingerIndicator = new BollingerIndicator(20, 2.0);
 
+    // Инициализируем индикаторы ОДИН РАЗ как поля класса
+    private final BollingerIndicator bollingerLtf = new BollingerIndicator(20, 2.0);
+    private final BollingerIndicator bollingerHtf = new BollingerIndicator(20, 2.0);
+
     private final FibonacciIndicator fibonacciIndicator = new FibonacciIndicator(100);
     private final VolumeProfileIndicator volumeProfileIndicator = new VolumeProfileIndicator(200, 50);
 
@@ -750,14 +754,14 @@ public class StrategyService {
     }
 
     /**
-     * Метод для проверки сигнала на основе старшего таймфрейма (HTF) и младшего таймфрейма (LTF).
+     * Живой анализ тика без выделения новой памяти (O(1) по созданию объектов)
      */
-    public void checkTickSignal(String symbol, double midPrice, CandleSeries seriesLtf, CandleSeries seriesHtf) {
-        // Защита: если истории в сериях еще недостаточно для индикаторов — выходим
+    public synchronized void checkTickSignal(String symbol, double midPrice, CandleSeries seriesLtf, CandleSeries seriesHtf) {
+        // Защита: если истории в сериях еще недостаточно — выходим
         if (seriesLtf.size() < 30 || seriesHtf.size() < 30) return;
 
-        // 1. Инициализируем и подготавливаем индикаторы для СТАРШЕГО таймфрейма (htf)
-        BollingerIndicator bollingerHtf = new BollingerIndicator(20, 2.0);
+        // 1. Используем готовое поле класса для СТАРШЕГО таймфрейма (htf)
+        // Метод prepare просто обновит внутренний массив, не создавая новый BollingerIndicator
         bollingerHtf.prepare(seriesHtf);
 
         int lastIdxHtf = seriesHtf.size() - 1;
@@ -767,8 +771,7 @@ public class StrategyService {
         // Определяем старший тренд
         boolean isTrendUp = priceHtf > middleLineHtf;
 
-        // 2. Инициализируем и подготавливаем индикаторы для РАБОЧЕГО таймфрейма (ltf)
-        BollingerIndicator bollingerLtf = new BollingerIndicator(20, 2.0);
+        // 2. Используем готовое поле класса для РАБОЧЕГО таймфрейма (ltf)
         bollingerLtf.prepare(seriesLtf);
 
         int lastIdxLtf = seriesLtf.size() - 1;
@@ -777,7 +780,6 @@ public class StrategyService {
         String spamKey = symbol + "_TICK";
 
         // 3. ПРАВИЛО ВХОДА В ЛОНГ НА ОСНОВЕ ЦЕНЫ ТИКА
-        // Проверяем: старший тренд вверх И текущая цена тика пробила нижний Боллинджер рабочего таймфрейма
         if (isTrendUp && midPrice <= lowerBb) {
             boolean alreadySent = activeLongSignals.getOrDefault(spamKey, false);
 
