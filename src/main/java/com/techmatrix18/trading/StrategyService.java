@@ -790,6 +790,9 @@ public class StrategyService {
                 telegramService.sendMessageForAll(text);
                 activeLongSignals.put(spamKey, true); // Защита от спама
             }
+        } else if (midPrice > lowerBb) {
+            // Как только цена тика вернулась внутрь канала — сбрасываем флаг для этой монеты
+            activeLongSignals.put(spamKey, false);
         }
     }
 }
