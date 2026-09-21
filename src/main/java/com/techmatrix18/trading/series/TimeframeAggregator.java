@@ -1,6 +1,8 @@
 package com.techmatrix18.trading.series;
 
 import com.techmatrix18.model.Candle;
+import org.springframework.stereotype.Component;
+
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
@@ -15,6 +17,7 @@ import java.util.List;
  * @version 0.1.0
  */
 
+@Component
 public class TimeframeAggregator {
 
     /**
