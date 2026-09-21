@@ -4,9 +4,7 @@ import com.techmatrix18.dto.SignalDto;
 import com.techmatrix18.model.Candle;
 import com.techmatrix18.service.WebSocketService;
 import com.techmatrix18.telegram.TelegramService;
-import com.techmatrix18.trading.indicators.BollingerIndicator;
-import com.techmatrix18.trading.indicators.FibonacciIndicator;
-import com.techmatrix18.trading.indicators.RsiIndicator;
+import com.techmatrix18.trading.indicators.*;
 import com.techmatrix18.trading.rules.PriceNearFibRule;
 import com.techmatrix18.trading.rules.Rule;
 import com.techmatrix18.trading.rules.UnderIndicatorRule;
@@ -27,13 +25,14 @@ import java.util.Map;
  * @company TechMatrix18
  * @version 0.0.1
  */
+
 @Service
 public class SignalService {
-    // Создаем индикаторы через new, а не ждем их от Spring
+    // Создаю индикаторы через new, а не жду их от Spring
     private final RsiIndicator rsiIndicator = new RsiIndicator();
     private final FibonacciIndicator fibonacciIndicator = new FibonacciIndicator(100); // задайте нужный период
-    private final BollingerIndicator bollingerIndicator = new BollingerIndicator(20, 2.0, "MIDDLE");
-    // Добавьте остальные, если они там есть...
+    private final BollingerIndicator bollingerIndicator = new BollingerIndicator(20, 2.0);
+    // Добавляю остальные, если они там есть...
     private final StrategyService strategyService;
     private final TelegramService telegramService;
     private final WebSocketService webSocketService;
@@ -50,20 +49,25 @@ public class SignalService {
         int lastIndex = series.size() - 1;
         if (lastIndex < 1) return; // Нужно минимум 2 свечи для анализа
 
-        // 2. Рассчитываем уровни для текущего индекса
-        Map<String, Double> levels = fibonacciIndicator.calculate(series, lastIndex);
-        if (levels.isEmpty() || !levels.containsKey("level_618")) return;
+        // 2. Рассчитываем уровни для текущего индекса через новый индикатор
+        FibLevels levels = fibonacciIndicator.calculate(series, lastIndex);
 
-        // 3. Используем методы интерфейса CandleSeries (getCandle или getClose)
+        // Проверяем, что уровни успешно рассчитались и это не EMPTY-объект
+        if (levels == null || levels == FibLevels.EMPTY) return;
+
+        // 3. Используем методы интерфейса CandleSeries
         double currentPrice = series.getClose(lastIndex);
         double prevPrice = series.getClose(lastIndex - 1);
-        double goldLevel = levels.get("level_618");
+
+        // Получаем уровень 0.618 через геттер (замените на ваш точный метод из FibLevels)
+        double goldLevel = levels.lvl618();
 
         // 4. Проверяем пробой "золотого сечения"
         if (isLevelBrokenDown(currentPrice, prevPrice, goldLevel)) {
             System.out.println("СИГНАЛ: Цена " + symbol + " пробила уровень 0.618 вниз!");
         }
     }
+
 
     // Метод проверяет, пересекла ли цена уровень сверху вниз (медвежий сигнал)
     public boolean isLevelBrokenDown(double currentPrice, double previousPrice, double levelPrice) {
@@ -84,7 +88,7 @@ public class SignalService {
         int currentIndex = series.size() - 1;
         int prevIndex = currentIndex - 1;
 
-        // 3. ПОДГОТОВКА (Важно! Заполняем кэш индикаторов перед анализом)
+        // 3. ПОДГОТОВКА (Заполняем кэш индикаторов перед анализом)
         fibonacciIndicator.prepare(series);
         bollingerIndicator.prepare(series);
 
@@ -94,27 +98,40 @@ public class SignalService {
 
         // --- Анализ Фибоначчи ---
         // Берем уровни через getValue, так как мы вызвали prepare выше
-        var fibLevels = fibonacciIndicator.getValue(currentIndex);
-        if (fibLevels.containsKey("level_618")) {
-            double goldLevel = fibLevels.get("level_618");
+        FibLevels fibLevels = fibonacciIndicator.getValue(currentIndex);
 
-            // Используем логику пересечения
+        // Защита от пустых данных и проверка пересечения уровня 0.618 вверх
+        if (fibLevels != null && fibLevels != FibLevels.EMPTY) {
+            double goldLevel = fibLevels.lvl618(); // для record используйте lvl618() без get, если у вас так в коде
+
             if (prevPrice <= goldLevel && currentPrice > goldLevel) {
                 telegramService.sendMessageForAll("🚀 " + symbol + " пробил вверх Фибо 0.618!");
             }
         }
 
         // --- Анализ Боллинджера ---
-        // Получаем значения средней линии для текущей и предыдущей свечи
-        double basisLine = bollingerIndicator.getValue(currentIndex);
-        double prevBasisLine = bollingerIndicator.getValue(prevIndex);
+        // Получаем комплексные объекты значений Боллинджера для обеих свечей
+        BollingerValue currentBB = bollingerIndicator.getValue(currentIndex);
+        BollingerValue prevBB = bollingerIndicator.getValue(prevIndex);
 
-        if (prevPrice <= prevBasisLine && currentPrice > basisLine) {
-            telegramService.sendMessageForAll("📈 " + symbol + " пробил среднюю линию Боллинджера вверх");
-        } else if (prevPrice >= prevBasisLine && currentPrice < basisLine) {
-            telegramService.sendMessageForAll("📉 " + symbol + " пробил среднюю линию Боллинджера вниз");
+        // Проверяем, что данные Боллинджера посчитаны и не пусты
+        if (currentBB != null && currentBB != BollingerValue.EMPTY &&
+                prevBB != null && prevBB != BollingerValue.EMPTY) {
+
+            // Вытаскиваем среднюю линию (basis / sma) из объектов
+            // ВНИМАНИЕ: замените .getBasis() на точное имя поля/метода в вашем BollingerValue (например, .basis() или .sma)
+            double basisLine = currentBB.middle();
+            double prevBasisLine = prevBB.middle();
+
+            // Проверяем пересечение средней линии
+            if (prevPrice <= prevBasisLine && currentPrice > basisLine) {
+                telegramService.sendMessageForAll("📈 " + symbol + " пробил среднюю линию Боллинджера вверх");
+            } else if (prevPrice >= prevBasisLine && currentPrice < basisLine) {
+                telegramService.sendMessageForAll("📉 " + symbol + " пробил среднюю линию Боллинджера вниз");
+            }
         }
     }
+
 
     // Этот метод демонстрирует (с тестовыми данными), как можно объединить разные правила для генерации комплексных сигналов
     // Отправка сигналов (текстовых сообщений) в канал Телеграм (без скриншота графика)
@@ -128,11 +145,14 @@ public class SignalService {
         bollingerIndicator.prepare(series);
         fibonacciIndicator.prepare(series);
 
-        // 3. Создаем правила (исправлено добавлением series в nearSupport)
+        // 3. Создаем правила
         Rule rsiOversold = new UnderIndicatorRule(rsiIndicator, 30.0);
 
-        // ВАЖНО: Добавлена series первым аргументом, как требует твой класс PriceNearFibRule
-        Rule nearSupport = new PriceNearFibRule(series, fibonacciIndicator,"level_618", 0.001);
+        // ВНИМАНИЕ: Если вы еще не переписывали класс PriceNearFibRule под новый FibonacciIndicator,
+        // вместо строки "level_618" логика внутри правила должна вызывать .lvl618().
+        // Если класс PriceNearFibRule уже обновлен и принимает индикатор напрямую — оставляем так:
+        // Передаем ссылку на метод FibLevels::lvl618 третьим аргументом
+        Rule nearSupport = new PriceNearFibRule(series, fibonacciIndicator, FibLevels::lvl618, 0.001);
 
         // 4. Проверка условий
         if (rsiOversold.isSatisfied(lastIndex)) {
@@ -152,7 +172,7 @@ public class SignalService {
                 tp = currentPrice.add(currentPrice.multiply(tpPercent));
                 sl = currentPrice.subtract(currentPrice.multiply(slPercent));
             } else {
-                // Для SHORT: TP ниже текущей цены, SL — выше
+                // Для SHORT: TP ниже текущей цены, SL — чаще выше
                 tp = currentPrice.subtract(currentPrice.multiply(tpPercent));
                 sl = currentPrice.add(currentPrice.multiply(slPercent));
             }
@@ -162,58 +182,56 @@ public class SignalService {
             sl = sl.setScale(2, RoundingMode.HALF_UP);
 
             // 1. Расчет риска на сделку в % от цены входа
-            // Формула: (|Цена_входа - SL| / Цена_входа) * 100
             BigDecimal priceDiffSL = currentPrice.subtract(sl).abs();
             BigDecimal riskPercent = priceDiffSL
-                .divide(currentPrice, 4, RoundingMode.HALF_UP)
-                .multiply(new BigDecimal("100"))
-                .setScale(2, RoundingMode.HALF_UP);
+                    .divide(currentPrice, 4, RoundingMode.HALF_UP)
+                    .multiply(new BigDecimal("100"))
+                    .setScale(2, RoundingMode.HALF_UP);
 
             // 2. Расчет соотношения Risk:Reward (RR)
-            // Формула: |Цена_входа - TP| / |Цена_входа - SL|
             BigDecimal priceDiffTP = currentPrice.subtract(tp).abs();
-            BigDecimal rrRatio = priceDiffTP.divide(priceDiffSL, 1, RoundingMode.HALF_UP); // Обычно пишут 1 знак, например 1:3.0
+            BigDecimal rrRatio = priceDiffTP.divide(priceDiffSL, 1, RoundingMode.HALF_UP);
 
-            //String text = "📉 " + symbolName + ": RSI ниже 30. Зона перепроданности.";
             String text = String.format("📊 Сделка %s / %s\n" +
-                    "Сторона: %s \n\r" +
-                    "Объем: %s лот \n\r" +
-                    "Цена: %s USDT\n\r" +
-                    "TP: %s (2%) \n\r" +
-                    "SL: %s (1%) \n\r" +
-                    "Риск: %s%%\n\r" +
-                    "RiskReward: 1:%s\n\r" +
-                    "Сигнал: %s.",
-                symbolName,
-                "M30",
-                "LONG",
-                "1",
-                currentPrice,
-                tp,
-                sl,
-                riskPercent,    // Подставится в %s%% (двойной процент экранирует символ %)
-                rrRatio,        // Подставится в 1:%s
-                "Цена подошла к уровню Фибо 0.618");
+                            "Сторона: %s \n\r" +
+                            "Объем: %s лот \n\r" +
+                            "Цена: %s USDT\n\r" +
+                            "TP: %s (2%) \n\r" +
+                            "SL: %s (1%) \n\r" +
+                            "Риск: %s%%\n\r" +
+                            "RiskReward: 1:%s\n\r" +
+                            "Сигнал: %s.",
+                    symbolName,
+                    "M30",
+                    "LONG",
+                    "1",
+                    currentPrice,
+                    tp,
+                    sl,
+                    riskPercent,
+                    rrRatio,
+                    "Цена подошла к уровню Фибо 0.618");
 
-            // раскомментировать - это работает (!)
             telegramService.sendMessageForAll(text);
 
-            // Send in WebSocket - WebSocket integration for real-time signal notifications via toasts
-            webSocketService.broadcastSignal(new SignalDto(System.currentTimeMillis(), symbolName,"SIGNAL", currentPrice, text));
+            // Send in WebSocket
+            webSocketService.broadcastSignal(new SignalDto(System.currentTimeMillis(), symbolName, "SIGNAL", currentPrice, text));
             System.out.println("----- web socket RSI: send to websocket signal: " + text);
         }
 
-        /*if (nearSupport.isSatisfied(lastIndex)) {
-            String text = "🎯 " + symbol + ": Цена подошла к уровню Фибо 0.618.";
+        // Раскомментированный и исправленный блок Фибоначчи
+        if (nearSupport.isSatisfied(lastIndex)) {
+            // ИСПРАВЛЕНО: заменено 'symbol' на 'symbolName'
+            String text = "🎯 " + symbolName + ": Цена подошла к уровню Фибо 0.618.";
             telegramService.sendMessageForAll(text);
 
-            // Получаем саму свечу (объект Candle) и Берем цену закрытия (BigDecimal)
             Candle lastCandle = series.getCandle(lastIndex);
             BigDecimal currentPrice = lastCandle.getClose();
-            // Send in WebSocket - WebSocket integration for real-time signal notifications via toasts
+
+            // Send in WebSocket
             webSocketService.broadcastSignal(new SignalDto(System.currentTimeMillis(), symbolName, "SIGNAL", currentPrice, text));
             System.out.println("----- web socket FIBO: send to websocket signal: " + text);
-        }*/
+        }
     }
 
     private boolean isCrossedUp(double curr, double prev, double level) {

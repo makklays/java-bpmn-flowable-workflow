@@ -32,6 +32,7 @@ import java.util.stream.Collectors;
  * @company TechMatrix18
  * @version 0.0.1
  */
+
 @Service
 public class StrategyService {
     // Индикаторы без параметров можно создать сразу (если они не @Component)
@@ -268,7 +269,7 @@ public class StrategyService {
     }
 
     // Сигнал на выход - проверим, не выдыхается ли тренд.
-// Если RSI в зоне перекупленности И импульс MACD затухает — пора фиксировать прибыль.
+    // Если RSI в зоне перекупленности И импульс MACD затухает — пора фиксировать прибыль.
     public void checkExitStrategy(CandleSeries series) {
         // 2. ИНДЕКС: Последняя закрытая свеча (онлайн-режим)
         int i = series.size() - 1;
