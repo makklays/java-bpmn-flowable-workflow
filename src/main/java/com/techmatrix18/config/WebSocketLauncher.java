@@ -2,6 +2,7 @@ package com.techmatrix18.config;
 
 import com.techmatrix18.clients.BinanceKlineWebSocket;
 import com.techmatrix18.rabbitmq.CandlePublisher;
+import com.techmatrix18.telegram.TelegramService;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -22,6 +23,12 @@ import java.util.concurrent.CompletableFuture;
 
 @Configuration
 public class WebSocketLauncher {
+
+    private final TelegramService telegramService;
+
+    public WebSocketLauncher(TelegramService telegramService) {
+        this.telegramService = telegramService;
+    }
 
     private final Map<String, Integer> symbols = Map.ofEntries(
         entry("BTCUSDT", 1),
@@ -115,6 +122,23 @@ public class WebSocketLauncher {
             BinanceKlineWebSocket tickClient = new BinanceKlineWebSocket("BTCUSDT", 1, "ticks", publisher);
             tickClient.connectCombined(symbols);
             System.out.println(">>> Единый комбинированный поток ТИКОВ (Bid/Ask) успешно активирован.");
+
+            System.out.println("====== 🎉 РОБОТ ПОЛНОСТЬЮ ГОТОВ К РАБОТЕ ======");
+
+            // ==========================================
+            // ШАГ 3: УВЕДОМЛЕНИЕ В ТЕЛЕГРАМ О ГОТОВНОСТИ
+            // ==========================================
+            String startMsg = String.format(
+                    "🚀 *System successfully launched!*\n\n" +
+                    "📊 Coins actively trading: *%d*\n" +
+                    "✅ Indicators for `15m`, `1h`, and `1d` timeframes are fully warmed up.\n" +
+                    "⚡ All live WebSocket streams are connected.\n\n" +
+                    "🤖 Trading bot is ready to generate signals!",
+                    symbols.size()
+            );
+
+            // Вызываем ваш сервис телеграма (убедитесь, что внедряете его в этот класс или используете статический метод)
+            telegramService.sendMessageForAll(startMsg);
 
             System.out.println("====== 🎉 РОБОТ ПОЛНОСТЬЮ ГОТОВ К РАБОТЕ ======");
         };

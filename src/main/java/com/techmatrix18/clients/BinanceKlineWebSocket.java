@@ -318,9 +318,9 @@ public class BinanceKlineWebSocket {
             String sym = entry.getKey();
             Integer id = entry.getValue();
 
-            // 1. Загружаем историю свечей через ваш метод REST API
+            // 1. Загружаем историю свечей через ваш метод REST API - последние 200 свечей
             // Предполагаем, что fetchHistoryFromRest возвращает List<Candle>
-            List<Candle> historicalCandles = fetchHistoryFromRest(sym, this.timeframe, 100);
+            List<Candle> historicalCandles = fetchHistoryFromRest(sym, this.timeframe, 200);
 
             // 6. ПЕРЕДАЕМ ту же историю в слушатель (для сигналов)
             for (Candle c : historicalCandles) {
