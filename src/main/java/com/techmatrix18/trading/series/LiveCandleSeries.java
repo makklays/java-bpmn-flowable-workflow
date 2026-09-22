@@ -19,8 +19,8 @@ import java.util.List;
  */
 
 public class LiveCandleSeries implements CandleSeries {
-    // Используем ArrayList для быстрого доступа по индексу O(1)
 
+    // Используем ArrayList для быстрого доступа по индексу O(1)
     // Синхронизируем внутренний список для защиты от гонки потоков (Race Conditions)
     private final List<Candle> buffer = new ArrayList<>();
     private final int maxSize;
@@ -33,12 +33,12 @@ public class LiveCandleSeries implements CandleSeries {
      * Потокобезопасное добавление новой свечи от биржевого веб-сокета.
      */
     public synchronized void addCandle(Candle candle) {
-        buffer.add(candle);
-
-        // Если превысили лимит, удаляем самый старый элемент
+        // Если превысили лимит, удаляем самый старый элемент - защита от переполнения памяти IndexOutOfBoundsException
         if (buffer.size() > maxSize) {
             buffer.remove(0);
         }
+
+        buffer.add(candle);
     }
 
     @Override
@@ -51,8 +51,13 @@ public class LiveCandleSeries implements CandleSeries {
         return buffer.size();
     }
 
-    @Override public double getClose(int index) { return buffer.get(index).getClose().doubleValue(); }
-    @Override public double getHigh(int index) { return buffer.get(index).getHigh().doubleValue(); }
-    @Override public double getLow(int index) { return buffer.get(index).getLow().doubleValue(); }
+    @Override
+    public synchronized double getClose(int index) { return buffer.get(index).getClose().doubleValue(); }
+
+    @Override
+    public synchronized double getHigh(int index) { return buffer.get(index).getHigh().doubleValue(); }
+
+    @Override
+    public synchronized double getLow(int index) { return buffer.get(index).getLow().doubleValue(); }
 }
 
