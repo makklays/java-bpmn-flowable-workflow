@@ -193,8 +193,8 @@ public class SignalService {
                             "Сторона: %s \n\r" +
                             "Объем: %s лот \n\r" +
                             "Цена: %s USDT\n\r" +
-                            "TP: %s (2%) \n\r" +
-                            "SL: %s (1%) \n\r" +
+                            "TP: %s (2%%) \n\r" +
+                            "SL: %s (1%%) \n\r" +
                             "Риск: %s%%\n\r" +
                             "RiskReward: 1:%s\n\r" +
                             "Сигнал: %s.",

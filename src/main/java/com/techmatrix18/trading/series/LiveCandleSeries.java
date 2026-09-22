@@ -33,7 +33,7 @@ public class LiveCandleSeries implements CandleSeries {
      */
     public synchronized void addCandle(Candle candle) {
         // Если превысили лимит, удаляем самый старый элемент - защита от переполнения памяти IndexOutOfBoundsException
-        if (buffer.size() > maxSize) {
+        if (buffer.size() >= maxSize) {
             buffer.remove(0);
         }
 
