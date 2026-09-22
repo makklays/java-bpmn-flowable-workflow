@@ -9,10 +9,13 @@ import com.techmatrix18.trading.rules.PriceNearFibRule;
 import com.techmatrix18.trading.rules.Rule;
 import com.techmatrix18.trading.rules.UnderIndicatorRule;
 import com.techmatrix18.trading.series.CandleSeries;
+import com.techmatrix18.trading.series.LiveCandleSeries;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * SignalService is responsible for analyzing price movements and generating trading signals.
@@ -31,6 +34,10 @@ public class SignalService {
     private final RsiIndicator rsiIndicator = new RsiIndicator();
     private final FibonacciIndicator fibonacciIndicator = new FibonacciIndicator(100); // задайте нужный период
     private final BollingerIndicator bollingerIndicator = new BollingerIndicator(20, 2.0);
+
+    // Внутри класса SignalService добавляем переменную:
+    private final Set<String> sentFiboSignals = ConcurrentHashMap.newKeySet();
+
     // Добавляю остальные, если они там есть...
     private final StrategyService strategyService;
     private final TelegramService telegramService;
@@ -132,7 +139,8 @@ public class SignalService {
 
     // Этот метод демонстрирует (с тестовыми данными), как можно объединить разные правила для генерации комплексных сигналов
     // Отправка сигналов (текстовых сообщений) в канал Телеграм (без скриншота графика)
-    public void processSignals(String symbolName, CandleSeries series) {
+    //public void processSignals(String symbolName, CandleSeries series) {
+    public void processSignals(String symbolName, CandleSeries series, String timeframe) {
         int lastIndex = series.size() - 1;
         // Для CrossedUpRule нужны минимум 2 свечи (текущая и предыдущая)
         if (lastIndex < 1) return;
@@ -216,18 +224,33 @@ public class SignalService {
             System.out.println("----- web socket RSI: send to websocket signal: " + text);
         }
 
-        // Раскомментированный и исправленный блок Фибоначчи
-        if (nearSupport.isSatisfied(lastIndex)) {
-            // ИСПРАВЛЕНО: заменено 'symbol' на 'symbolName'
-            String text = "🎯 " + symbolName + ": Цена подошла к уровню Фибо 0.618.";
-            telegramService.sendMessageForAll(text);
+        // =====================================================================
+        // ОБНОВЛЕННЫЙ БЛОК ФИБОНАЧЧИ С ЗАЩИТОЙ ОТ СПАМА
+        // =====================================================================
+        // 1. ОГРАНИЧЕНИЕ: Полностью игнорируем минутный таймфрейм (много шума, не точные данные)
+        if (!"1m".equals(timeframe)) {
 
-            Candle lastCandle = series.getCandle(lastIndex);
-            BigDecimal currentPrice = lastCandle.getClose();
+            Candle lastCandle = ((LiveCandleSeries) series).getCandle(lastIndex);
 
-            // Send in WebSocket
-            webSocketService.broadcastSignal(new SignalDto(System.currentTimeMillis(), symbolName, "SIGNAL", currentPrice, text));
-            System.out.println("----- web socket FIBO: send to websocket signal: " + text);
+            // Формируем уникальный ключ для конкретной свечи (например, "BTCUSDT_15m_1700000000000")
+            String signalKey = symbolName + "_" + timeframe + "_" + lastCandle.getOpenTime();
+
+            // 2. Проверяем техническое условие Фибоначчи
+            if (nearSupport.isSatisfied(lastIndex)) {
+
+                // 3. ЗАЩИТА ОТ СПАМА (повторных сообщений): .add() вернет true только ОДИН РАЗ для этой свечи
+                if (sentFiboSignals.add(signalKey)) {
+
+                    String text = "🎯 " + symbolName + " [" + timeframe + "]: Цена подошла к уровню Фибо 0.618.";
+                    telegramService.sendMessageForAll(text);
+
+                    BigDecimal currentPrice = lastCandle.getClose();
+
+                    // Отправка в Web Socket
+                    webSocketService.broadcastSignal(new SignalDto(System.currentTimeMillis(), symbolName, "SIGNAL", currentPrice, text));
+                    System.out.println("----- web socket FIBO: send to websocket signal: " + text);
+                }
+            }
         }
     }
 

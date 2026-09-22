@@ -97,7 +97,7 @@ public class CandleListener {
                     currentRsi = rsiIndicator.calculateIncremental(series);
 
                     System.out.println("Analyzing signals [" + timeframe + "] for: " + symbolName + " | Size: " + series.size());
-                    signalService.processSignals(symbolName, series);
+                    signalService.processSignals(symbolName, series, timeframe);
                 } else {
                     // Просто считаем для плавной стрелки
                     currentRsi = rsiIndicator.calculateTemporary(series, candle.getClose().doubleValue());
