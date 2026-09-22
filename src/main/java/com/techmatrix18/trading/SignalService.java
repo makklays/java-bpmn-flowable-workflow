@@ -239,6 +239,7 @@ public class SignalService {
             if (nearSupport.isSatisfied(lastIndex)) {
 
                 // 3. ЗАЩИТА ОТ СПАМА (повторных сообщений): .add() вернет true только ОДИН РАЗ для этой свечи
+                // TODO: добавить очистку от утечка памяти / Memory Leak (старые данные не удаляются и массив бесконечно растет)
                 if (sentFiboSignals.add(signalKey)) {
 
                     String text = "🎯 " + symbolName + " [" + timeframe + "]: Цена подошла к уровню Фибо 0.618.";
