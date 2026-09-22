@@ -3,7 +3,6 @@ package com.techmatrix18.trading.series;
 import com.techmatrix18.model.Candle;
 
 import java.util.ArrayList;
-import java.util.LinkedList;
 import java.util.List;
 
 /**

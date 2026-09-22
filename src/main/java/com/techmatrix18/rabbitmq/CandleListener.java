@@ -102,10 +102,18 @@ public class CandleListener {
                     // Просто считаем для плавной стрелки
                     currentRsi = rsiIndicator.calculateTemporary(series, candle.getClose().doubleValue());
                 }
+            } else {
+                // Лог предупреждения, чтобы вы видели, если какая-то монета не прогрелась
+                if (candle.isClosed()) {
+                    System.out.println("⚠️ Пропуск аналитики [" + timeframe + "] для " + symbolName + ". Мало свечей в кэше: " + series.size());
+                }
             }
 
-            // Добавляем значение в объект перед отправкой
-            candle.getIndicators().put("rsi", currentRsi / 100.0);
+            // Записываем индикатор (теперь безопасно — currentRsi либо посчитан, либо равен дефолтным 50.0)
+            if (candle.getIndicators() != null) {
+                // Добавляем значение в объект перед отправкой
+                candle.getIndicators().put("rsi", currentRsi / 100.0);
+            }
 
             // Шлем в React для обновления графиков и спидометров
             webSocketServer.broadcast(candle);

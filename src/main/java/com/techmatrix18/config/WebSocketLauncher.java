@@ -78,6 +78,12 @@ public class WebSocketLauncher {
                 clientM15.warmUpAll(symbols);
                 Thread.sleep(1000);
 
+                // Прогрев M1
+                System.out.println(">>> [4/4] Загрузка истории 1m...");
+                BinanceKlineWebSocket clientM1_warm = new BinanceKlineWebSocket("BTC", 1, "1m", publisher);
+                clientM1_warm.warmUpAll(symbols);
+                Thread.sleep(1000);
+
                 System.out.println("✅ ИСТОРИЯ ВСЕХ ТАЙМФРЕЙМОВ УСПЕШНО ЗАГРУЖЕНА И ИНДИКАТОРЫ ПРОГРЕТЫ.");
             } catch (Exception e) {
                 System.err.println("❌ КРИТИЧЕСКАЯ ОШИБКА ПРИ ПРОГРЕВЕ ИСТОРИИ: " + e.getMessage());
@@ -131,7 +137,7 @@ public class WebSocketLauncher {
             String startMsg = String.format(
                     "🚀 *System successfully launched!*\n\n" +
                     "📊 Coins actively trading: *%d*\n" +
-                    "✅ Indicators for `15m`, `1h`, and `1d` timeframes are fully warmed up.\n" +
+                    "✅ Indicators for `1m`, `15m`, `1h`, and `1d` timeframes are fully warmed up.\n" +
                     "⚡ All live WebSocket streams are connected.\n\n" +
                     "🤖 Trading bot is ready to generate signals!",
                     symbols.size()
